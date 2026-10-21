@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "bundle:mac": "python3 ../../scripts/bundle_mpv_macos.py \"../../target/release/bundle/macos/Watch Together.app\"",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -107,7 +107,22 @@ impl MpvApi {
             candidate_paths.push(env_path);
         }
 
-        // macOS paths
+        // Relative to current executable (crucial for bundled .app Frameworks and Windows portable distribution)
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                // macOS bundle Frameworks: Contents/MacOS/../Frameworks/
+                candidate_paths.push(exe_dir.join("../Frameworks/libmpv.2.dylib").to_string_lossy().into_owned());
+                candidate_paths.push(exe_dir.join("../Frameworks/libmpv.dylib").to_string_lossy().into_owned());
+                // Windows next to exe
+                candidate_paths.push(exe_dir.join("mpv-2.dll").to_string_lossy().into_owned());
+                candidate_paths.push(exe_dir.join("libmpv-2.dll").to_string_lossy().into_owned());
+                // Linux next to exe
+                candidate_paths.push(exe_dir.join("libmpv.so.2").to_string_lossy().into_owned());
+                candidate_paths.push(exe_dir.join("libmpv.so").to_string_lossy().into_owned());
+            }
+        }
+
+        // macOS standard system paths
         candidate_paths.push("@rpath/libmpv.2.dylib".to_string());
         candidate_paths.push("../Frameworks/libmpv.2.dylib".to_string());
         candidate_paths.push("/opt/homebrew/lib/libmpv.2.dylib".to_string());
