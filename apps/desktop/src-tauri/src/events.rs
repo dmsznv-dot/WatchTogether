@@ -108,18 +108,31 @@ impl EventSink for MockEventSink {
 }
 
 /// Tauri event sink emitting to Webview frontends or logging when headless.
-#[derive(Default)]
-pub struct TauriEventSink;
+#[derive(Default, Clone)]
+pub struct TauriEventSink {
+    app_handle: Arc<Mutex<Option<tauri::AppHandle>>>,
+}
 
 impl TauriEventSink {
     pub fn new() -> Self {
-        Self
+        Self {
+            app_handle: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
+        *self.app_handle.lock().unwrap() = Some(handle);
     }
 }
 
 impl EventSink for TauriEventSink {
     fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), AppError> {
-        tracing::debug!(event, %payload, "Emitted Tauri event");
+        if let Some(handle) = self.app_handle.lock().unwrap().as_ref() {
+            use tauri::Emitter;
+            let _ = handle.emit(event, payload);
+        } else {
+            tracing::debug!(event, %payload, "Emitted Tauri event (no webview handle attached)");
+        }
         Ok(())
     }
 }

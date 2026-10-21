@@ -115,7 +115,7 @@ impl AppState {
     pub fn start_player_event_listener(self: &Arc<Self>) {
         let mut rx = self.player.subscribe_events();
         let this = Arc::clone(self);
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             while let Ok(event) = rx.recv().await {
                 match event {
                     media_engine::PlayerEvent::TimePos {
