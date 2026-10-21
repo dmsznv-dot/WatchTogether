@@ -1,0 +1,28 @@
+[package]
+name = "media-stream"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Embedded HTTP byte-range video streaming server for Watch Together"
+
+[dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
+subtle = { workspace = true }
+sha2 = { workspace = true }
+mime_guess = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+http = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }

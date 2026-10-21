@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Sandbox -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Outgoing network connections (WebSocket signaling, STUN/TURN, HTTP Range client) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- Incoming network connections (HTTP byte-range server, local loopback proxy) -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- User-selected file read access via file picker dialog (Anti-traversal sandbox) -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+
+    <!-- Hardened Runtime: Allow loading third-party dynamic libraries (e.g. libmpv) -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Hardened Runtime: Allow JIT compilation for WebKit & codecs -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- Hardened Runtime: Allow unsigned executable memory for multimedia decoders -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

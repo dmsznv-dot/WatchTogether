@@ -1,0 +1,16 @@
+[package]
+name = "media-engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Embedded media player engine abstraction and libmpv integration for Watch Together"
+
+[dependencies]
+shared-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+libloading = { workspace = true }

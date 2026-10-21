@@ -1,0 +1,29 @@
+[package]
+name = "network"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Network connectivity, STUN/TURN, ICE, and P2P transport for Watch Together"
+
+[dependencies]
+shared-protocol = { workspace = true }
+sync-engine = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+http = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+media-stream = { workspace = true }
+reqwest = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
