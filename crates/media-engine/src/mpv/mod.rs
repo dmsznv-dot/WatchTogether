@@ -28,6 +28,7 @@ pub struct MpvPlayer {
     event_tx: broadcast::Sender<PlayerEvent>,
     is_terminating: Arc<AtomicBool>,
     _observer_thread: Option<JoinHandle<()>>,
+    current_file: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl MpvPlayer {
@@ -60,6 +61,13 @@ impl MpvPlayer {
         set_opt("keep-open", "yes")?;
         set_opt("terminal", "no")?;
         set_opt("msg-level", "all=warn")?;
+        set_opt("input-default-bindings", "yes")?;
+        set_opt("input-vo-keyboard", "yes")?;
+        set_opt("osd-level", "1")?;
+        set_opt("osd-bar", "yes")?;
+        set_opt("osd-font-size", "28")?;
+        set_opt("autofit-larger", "1280x720")?;
+        set_opt("title", "Watch Together")?;
 
         let init_res = unsafe { (api.mpv_initialize)(handle) };
         if init_res < 0 {
@@ -69,6 +77,25 @@ impl MpvPlayer {
                 init_res
             )));
         }
+
+        // Setup custom input key bindings
+        let bind_key = |key: &str, action: &str| {
+            if let (Ok(c_cmd), Ok(c_key), Ok(c_act)) = (
+                CString::new("key-binding"),
+                CString::new(key),
+                CString::new(action),
+            ) {
+                let mut args: [*const c_char; 4] = [
+                    c_cmd.as_ptr(),
+                    c_key.as_ptr(),
+                    c_act.as_ptr(),
+                    std::ptr::null(),
+                ];
+                unsafe { (api.mpv_command)(handle, args.as_mut_ptr()) };
+            }
+        };
+        bind_key("UP", "add volume 5");
+        bind_key("DOWN", "add volume -5");
 
         // Setup property observation
         let observe = |id: u64, name: &str, format: mpv_format| {
@@ -91,10 +118,45 @@ impl MpvPlayer {
         let api_clone = Arc::clone(&api);
         let is_terminating = Arc::new(AtomicBool::new(false));
         let is_terminating_clone = Arc::clone(&is_terminating);
+        let current_file = Arc::new(std::sync::Mutex::new(None));
 
         let raw_handle = handle as usize;
         let observer_thread = std::thread::spawn(move || {
             let h = raw_handle as *mut mpv_handle;
+
+            let query_and_emit_state = |target_h: *mut mpv_handle, tx: &broadcast::Sender<PlayerEvent>| {
+                let mut paused: c_int = 0;
+                let c_pause = CString::new("pause").unwrap();
+                let _ = unsafe {
+                    (api_clone.mpv_get_property)(target_h, c_pause.as_ptr(), MPV_FORMAT_FLAG, &mut paused as *mut _ as *mut c_void)
+                };
+
+                let mut spd: c_double = 1.0;
+                let c_spd = CString::new("speed").unwrap();
+                let _ = unsafe {
+                    (api_clone.mpv_get_property)(target_h, c_spd.as_ptr(), MPV_FORMAT_DOUBLE, &mut spd as *mut _ as *mut c_void)
+                };
+
+                let mut vol: c_double = 100.0;
+                let c_vol = CString::new("volume").unwrap();
+                let _ = unsafe {
+                    (api_clone.mpv_get_property)(target_h, c_vol.as_ptr(), MPV_FORMAT_DOUBLE, &mut vol as *mut _ as *mut c_void)
+                };
+
+                let mut muted: c_int = 0;
+                let c_mute = CString::new("mute").unwrap();
+                let _ = unsafe {
+                    (api_clone.mpv_get_property)(target_h, c_mute.as_ptr(), MPV_FORMAT_FLAG, &mut muted as *mut _ as *mut c_void)
+                };
+
+                let _ = tx.send(PlayerEvent::StateChange {
+                    is_playing: paused == 0,
+                    speed: spd as f32,
+                    volume: (vol / 100.0).clamp(0.0, 1.0),
+                    is_muted: muted != 0,
+                });
+            };
+
             while !is_terminating_clone.load(Ordering::SeqCst) {
                 let event_ptr = unsafe { (api_clone.mpv_wait_event)(h, -1.0) };
                 if event_ptr.is_null() {
@@ -111,72 +173,66 @@ impl MpvPlayer {
                     MPV_EVENT_PROPERTY_CHANGE if !event.data.is_null() => {
                         let prop = unsafe { &*(event.data as *const mpv_event_property) };
                         if !prop.name.is_null() {
-                                let name = unsafe { CStr::from_ptr(prop.name) }.to_string_lossy();
-                                match name.as_ref() {
-                                    "time-pos" if prop.format == MPV_FORMAT_DOUBLE => {
-                                        let sec = unsafe { *(prop.data as *const c_double) };
-                                        let pos_ms = (sec * 1000.0).max(0.0) as u64;
-                                        // fetch duration
-                                        let mut dur_sec: c_double = 0.0;
-                                        let c_dur = CString::new("duration").unwrap();
-                                        let dur_ms = if unsafe {
-                                            (api_clone.mpv_get_property)(
-                                                h,
-                                                c_dur.as_ptr(),
-                                                MPV_FORMAT_DOUBLE,
-                                                &mut dur_sec as *mut _ as *mut c_void,
-                                            )
-                                        } >= 0
-                                        {
-                                            (dur_sec * 1000.0).max(0.0) as u64
-                                        } else {
-                                            0
-                                        };
+                            let name = unsafe { CStr::from_ptr(prop.name) }.to_string_lossy();
+                            match name.as_ref() {
+                                "time-pos" if prop.format == MPV_FORMAT_DOUBLE => {
+                                    let sec = unsafe { *(prop.data as *const c_double) };
+                                    let pos_ms = (sec * 1000.0).max(0.0) as u64;
+                                    // fetch duration
+                                    let mut dur_sec: c_double = 0.0;
+                                    let c_dur = CString::new("duration").unwrap();
+                                    let dur_ms = if unsafe {
+                                        (api_clone.mpv_get_property)(
+                                            h,
+                                            c_dur.as_ptr(),
+                                            MPV_FORMAT_DOUBLE,
+                                            &mut dur_sec as *mut _ as *mut c_void,
+                                        )
+                                    } >= 0
+                                    {
+                                        (dur_sec * 1000.0).max(0.0) as u64
+                                    } else {
+                                        0
+                                    };
 
-                                        let _ = event_tx_clone.send(PlayerEvent::TimePos {
-                                            position_ms: pos_ms,
-                                            duration_ms: dur_ms,
-                                        });
-                                    }
-                                    "pause" if prop.format == MPV_FORMAT_FLAG => {
-                                        let paused = unsafe { *(prop.data as *const c_int) } != 0;
-                                        let _ = event_tx_clone.send(PlayerEvent::StateChange {
-                                            is_playing: !paused,
-                                            speed: 1.0,
-                                            volume: 1.0,
-                                            is_muted: false,
-                                        });
-                                    }
-                                    "width" | "height" => {
-                                        let mut w: i64 = 0;
-                                        let mut h_val: i64 = 0;
-                                        let c_w = CString::new("width").unwrap();
-                                        let c_h = CString::new("height").unwrap();
-                                        let res_w = unsafe {
-                                            (api_clone.mpv_get_property)(
-                                                h,
-                                                c_w.as_ptr(),
-                                                MPV_FORMAT_INT64,
-                                                &mut w as *mut _ as *mut c_void,
-                                            )
-                                        };
-                                        let res_h = unsafe {
-                                            (api_clone.mpv_get_property)(
-                                                h,
-                                                c_h.as_ptr(),
-                                                MPV_FORMAT_INT64,
-                                                &mut h_val as *mut _ as *mut c_void,
-                                            )
-                                        };
-                                        if res_w >= 0 && res_h >= 0 && w > 0 && h_val > 0 {
-                                            let dims = VideoDimensions::new(w as u32, h_val as u32);
-                                            let _ = event_tx_clone.send(PlayerEvent::DimensionsChange(dims));
-                                        }
-                                    }
-                                    _ => {}
+                                    let _ = event_tx_clone.send(PlayerEvent::TimePos {
+                                        position_ms: pos_ms,
+                                        duration_ms: dur_ms,
+                                    });
                                 }
+                                "pause" | "speed" | "volume" | "mute" => {
+                                    query_and_emit_state(h, &event_tx_clone);
+                                }
+                                "width" | "height" => {
+                                    let mut w: i64 = 0;
+                                    let mut h_val: i64 = 0;
+                                    let c_w = CString::new("width").unwrap();
+                                    let c_h = CString::new("height").unwrap();
+                                    let res_w = unsafe {
+                                        (api_clone.mpv_get_property)(
+                                            h,
+                                            c_w.as_ptr(),
+                                            MPV_FORMAT_INT64,
+                                            &mut w as *mut _ as *mut c_void,
+                                        )
+                                    };
+                                    let res_h = unsafe {
+                                        (api_clone.mpv_get_property)(
+                                            h,
+                                            c_h.as_ptr(),
+                                            MPV_FORMAT_INT64,
+                                            &mut h_val as *mut _ as *mut c_void,
+                                        )
+                                    };
+                                    if res_w >= 0 && res_h >= 0 && w > 0 && h_val > 0 {
+                                        let dims = VideoDimensions::new(w as u32, h_val as u32);
+                                        let _ = event_tx_clone.send(PlayerEvent::DimensionsChange(dims));
+                                    }
+                                }
+                                _ => {}
                             }
                         }
+                    }
                     _ => {}
                 }
             }
@@ -188,6 +244,7 @@ impl MpvPlayer {
             event_tx,
             is_terminating,
             _observer_thread: Some(observer_thread),
+            current_file,
         })
     }
 
@@ -214,6 +271,7 @@ impl MpvPlayer {
 
 impl MediaPlayer for MpvPlayer {
     fn open_file(&self, path_or_url: &str) -> Result<(), MediaEngineError> {
+        *self.current_file.lock().unwrap() = Some(path_or_url.to_string());
         let cmd = CString::new("loadfile").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
         let arg1 = CString::new(path_or_url).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
         let arg2 = CString::new("replace").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
@@ -595,7 +653,7 @@ impl MediaPlayer for MpvPlayer {
             unsafe { (self.api.mpv_free)(path_ptr as *mut c_void) };
             Some(s)
         } else {
-            None
+            self.current_file.lock().unwrap().clone()
         };
 
         let c_pause = CString::new("pause").unwrap();
@@ -683,6 +741,25 @@ impl MediaPlayer for MpvPlayer {
             volume: (vol / 100.0).clamp(0.0, 1.0),
             is_muted: muted != 0,
         })
+    }
+
+    fn toggle_fullscreen(&self) -> Result<bool, MediaEngineError> {
+        let cmd = CString::new("cycle").unwrap();
+        let arg = CString::new("fullscreen").unwrap();
+        let mut args: [*const c_char; 3] = [cmd.as_ptr(), arg.as_ptr(), std::ptr::null()];
+        let _ = unsafe { (self.api.mpv_command)(self.handle.0, args.as_mut_ptr()) };
+
+        let prop = CString::new("fullscreen").unwrap();
+        let mut fs: c_int = 0;
+        let _ = unsafe {
+            (self.api.mpv_get_property)(
+                self.handle.0,
+                prop.as_ptr(),
+                MPV_FORMAT_FLAG,
+                &mut fs as *mut _ as *mut c_void,
+            )
+        };
+        Ok(fs != 0)
     }
 
     fn playback_state(&self) -> Result<PlaybackState, MediaEngineError> {

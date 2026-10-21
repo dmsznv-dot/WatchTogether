@@ -91,7 +91,7 @@ export function usePlayer({ initialVolume = 1.0, initialMuted = false }: UsePlay
   const openFile = useCallback(async (path: string) => {
     try {
       const state = await playerApi.openFile(path);
-      setCurrentFile(state.current_file);
+      setCurrentFile(state.current_file || path);
       setIsPlaying(state.is_playing);
       setPositionSec(state.position_ms / 1000);
       setDurationSec(state.duration_ms / 1000);

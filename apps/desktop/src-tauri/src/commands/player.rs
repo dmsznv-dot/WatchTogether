@@ -17,7 +17,10 @@ fn current_time_ms() -> u64 {
 /// Opens a video file or stream URL.
 pub async fn cmd_player_open_file(state: &AppState, path: String) -> Result<PlayerState, AppError> {
     state.player.open_file(&path)?;
-    let p_state = state.player.get_state()?;
+    let mut p_state = state.player.get_state()?;
+    if p_state.current_file.is_none() {
+        p_state.current_file = Some(path);
+    }
     Ok(p_state)
 }
 

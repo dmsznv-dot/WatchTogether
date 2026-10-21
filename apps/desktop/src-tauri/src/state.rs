@@ -151,6 +151,29 @@ impl AppState {
                         let _ = this
                             .event_sink
                             .emit_serializable("player://state-change", &payload);
+
+                        // If host is active in a room, synchronize playback play/pause state
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+
+                        let mut session_guard = this.session.write().await;
+                        if let SessionState::Host(host) = &mut *session_guard {
+                            if let Some(room_arc) = host.room_manager.get_room_by_id(&host.room_id).await {
+                                let mut room = room_arc.lock().await;
+                                let is_room_playing = room.playback.status == shared_protocol::models::PlaybackStatus::Playing;
+                                if is_playing != is_room_playing {
+                                    let next_rev = room.playback.revision + 1;
+                                    if is_playing {
+                                        let _ = room.apply_play(&host.host_id, next_rev, now_ms);
+                                    } else {
+                                        let cur_pos = this.player.get_state().map(|s| s.position_ms).unwrap_or(0);
+                                        let _ = room.apply_pause(&host.host_id, next_rev, cur_pos, now_ms);
+                                    }
+                                }
+                            }
+                        }
                     }
                     media_engine::PlayerEvent::TracksChange { tracks } => {
                         let payload = crate::events::TracksChangePayload { tracks };

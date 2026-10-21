@@ -72,6 +72,11 @@ pub trait MediaPlayer: Send + Sync {
     /// Retrieves current local player state snapshot.
     fn get_state(&self) -> Result<PlayerState, MediaEngineError>;
 
+    /// Toggles fullscreen mode for the player.
+    fn toggle_fullscreen(&self) -> Result<bool, MediaEngineError> {
+        Ok(false)
+    }
+
     /// Retrieves shared protocol playback state.
     fn playback_state(&self) -> Result<PlaybackState, MediaEngineError>;
 

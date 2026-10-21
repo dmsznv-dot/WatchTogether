@@ -132,11 +132,25 @@ export function VideoCanvas({
           >
             {/* Visual simulation of media content in mock/webview */}
             <div className="absolute inset-0 bg-gradient-to-tr from-zinc-950 via-zinc-900 to-indigo-950/40 opacity-70" />
-            <div className="relative text-center p-4 pointer-events-none select-none">
-              <Film className="w-16 h-16 mx-auto mb-2 text-zinc-700/80 animate-pulse" />
-              <p className="text-xs font-mono text-zinc-500">
+            <div className="relative text-center p-6 pointer-events-none select-none max-w-lg">
+              <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                <Film className="w-8 h-8 animate-pulse" />
+              </div>
+              <p className="text-base font-semibold text-zinc-200 mb-1 truncate">
                 {currentFile.split('/').pop() || currentFile}
               </p>
+              <p className="text-xs text-zinc-400 mb-4">
+                Playing in hardware-accelerated video player
+              </p>
+              <div className="inline-flex items-center justify-center gap-2 text-[11px] text-zinc-400 bg-zinc-900/80 py-1.5 px-3 rounded-lg border border-zinc-800">
+                <span>Space: Play/Pause</span>
+                <span>•</span>
+                <span>←/→: Seek 5s</span>
+                <span>•</span>
+                <span>F: Fullscreen</span>
+                <span>•</span>
+                <span>M: Mute</span>
+              </div>
             </div>
           </div>
         )}

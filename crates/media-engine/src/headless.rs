@@ -24,6 +24,7 @@ struct InnerState {
     speed: f32,
     volume: f64,
     is_muted: bool,
+    is_fullscreen: bool,
     audio_tracks: Vec<MediaTrack>,
     subtitle_tracks: Vec<MediaTrack>,
     dimensions: Option<VideoDimensions>,
@@ -53,6 +54,7 @@ impl HeadlessPlayer {
             speed: 1.0,
             volume: 1.0,
             is_muted: false,
+            is_fullscreen: false,
             audio_tracks: vec![
                 MediaTrack {
                     id: 1,
@@ -364,6 +366,12 @@ impl MediaPlayer for HeadlessPlayer {
             volume: state.volume,
             is_muted: state.is_muted,
         })
+    }
+
+    fn toggle_fullscreen(&self) -> Result<bool, MediaEngineError> {
+        let mut state = self.inner.write().unwrap();
+        state.is_fullscreen = !state.is_fullscreen;
+        Ok(state.is_fullscreen)
     }
 
     fn playback_state(&self) -> Result<PlaybackState, MediaEngineError> {
