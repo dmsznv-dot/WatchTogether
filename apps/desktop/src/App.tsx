@@ -36,6 +36,23 @@ export function App() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState<boolean>(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
+  const [invitation, setInvitation] = useState<string | undefined>();
+  useEffect(() => {
+    if (!native) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    const receive = (urls: string[]) => {
+      const url = urls.find(value => value.startsWith('watchtogether://join/'));
+      if (!disposed && url) { setInvitation(url); setIsJoinModalOpen(true); }
+    };
+    import('@tauri-apps/plugin-deep-link').then(async ({ getCurrent, onOpenUrl }) => {
+      const unlisten = await onOpenUrl(receive);
+      if (disposed) { unlisten(); return; }
+      stop = unlisten;
+      receive((await getCurrent()) || []);
+    }).catch(console.error);
+    return () => { disposed = true; stop?.(); };
+  }, [native]);
 
   useEffect(() => {
     if (!native) return;
@@ -195,6 +212,8 @@ export function App() {
       {/* Host Authority Toast (for non-hosts in HostOnly mode) */}
       <HostAuthorityToast message={room.authorityToast} />
 
+      {room.error && !isModalOpen && <div role="alert" className="absolute top-24 left-4 right-4 z-40 p-3 rounded-xl bg-rose-950 text-rose-200">{room.error}</div>}
+
       {/* Modals */}
       <CreateRoomModal
         isOpen={isCreateModalOpen}
@@ -203,11 +222,13 @@ export function App() {
         roomToken={room.roomToken}
         initialHostName={settings.displayName}
         isLoading={room.isLoading}
+        error={room.error}
         onCreateRoom={room.createRoom}
         onEndRoom={room.leaveRoom}
       />
 
       <JoinRoomModal
+        initialInvitation={invitation}
         isOpen={isJoinModalOpen}
         onClose={() => setIsJoinModalOpen(false)}
         initialDisplayName={settings.displayName}

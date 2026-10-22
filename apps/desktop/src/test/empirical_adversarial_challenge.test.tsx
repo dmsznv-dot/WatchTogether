@@ -580,6 +580,7 @@ describe('Milestone 4 Empirical Adversarial Verification Suite', () => {
       const submitBtn = screen.getByTestId('join-room-submit-btn');
 
       fireEvent.change(codeInput, { target: { value: 'K7M2P9' } });
+      fireEvent.change(screen.getByTestId('join-host-address-input'), {target:{value:'127.0.0.1:8999'}});
       fireEvent.change(tokenInput, {
         target: { value: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' },
       });

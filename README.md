@@ -1,6 +1,19 @@
 # Watch Together 🎬🍿
 
-## Обновление от 22 октября 2026
+## Совместный просмотр со своими копиями фильма
+
+Каждый открывает локальную копию фильма на своём Mac или Windows. Ведущий создаёт
+комнату: сервер синхронизации запускается внутри приложения на его компьютере
+(TCP 8999) и работает до закрытия комнаты или приложения. Вход использует настоящий
+WebSocket, а запуск, пауза, перемотка и скорость передаются обоим участникам.
+
+Для интернета ведущему нужен доступный адрес: публичный IP с перенаправлением
+TCP 8999 либо общая VPN. Полная ссылка и Connection Code включают адрес комнаты;
+одного шестизначного ID для поиска компьютера в интернете недостаточно.
+
+[Инструкция подключения и проверки](docs/SELF_HOSTED_SYNC.md).
+
+## Предыдущая опубликованная сборка от 22 октября 2026
 
 Изменения находятся в ветке **main**:
 
@@ -32,7 +45,7 @@ Windows CI проходит тесты, сборку установщика, т�
 <div align="center">
 
 **Cross-Platform Synchronized Collaborative Media Player**  
-*VLC meets synchronized co-watching over direct peer-to-peer HTTP streaming — no cloud upload required.*
+*Synchronized playback of independent local video copies on macOS and Windows.*
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)]()
 [![Rust](https://img.shields.io/badge/rust-1.78%2B-orange.svg)](https://www.rust-lang.org)
@@ -49,11 +62,11 @@ Windows CI проходит тесты, сборку установщика, т�
 
 **Watch Together** is a lightweight desktop media player for macOS and Windows that lets friends watch local movies together in perfect sync over the internet.
 
-- 📁 **No Cloud Upload**: The host picks a local video (`.mp4`, `.mkv`, `.mov`). The file stays on the host computer.
-- ⚡ **Direct Byte-Range Streaming**: Guests stream required chunks directly from the host via HTTP Range requests.
+- 📁 **Local Copies**: Each viewer opens their own copy of the same movie (`.mp4`, `.mkv`, `.mov`).
+- ⚡ **Built-in Sync Server**: The host runs the room server inside the application. Only playback commands, timing and room metadata cross the network.
 - 🔄 **NTP Sync Engine**: Play, pause, seek, and speed changes are synchronized with $\le 250\text{ms}$ accuracy.
 - 🎧 **Independent Audio & Subtitles**: Each viewer chooses their own language, subtitles (`.srt`, `.ass`), and volume without affecting others.
-- 🔒 **Secure & Private**: Only the selected video is exposed through a cryptographically random 256-bit token. When the host closes the room, all streaming endpoints immediately shut down.
+- 🔒 **Room Invitations**: An invitation includes the host endpoint and a random authorization token. No video endpoint is exposed.
 
 ---
 
@@ -88,13 +101,13 @@ Windows CI проходит тесты, сборку установщика, т�
    - **Free Control**: Any friend can play, pause, seek, or change speed.
    - **Host Only**: Only you control playback.
 4. Click **«Create Room»** and copy your 6-character room code (e.g. `R7K2M9`) or invitation link.
-5. Send the code to your friends!
+5. Enter your reachable host address (TCP 8999), then send the complete invitation link or Connection Code. For internet access, configure TCP forwarding/firewall or use a shared VPN.
 
 ### As Guest (Joining a Room)
-1. Open **Watch Together**.
+1. Open **Watch Together** and load your own copy of the movie.
 2. Click **«Join Room»** in the top left.
-3. Enter the 6-character code (or paste the invitation link) and your display name.
-4. Click **«Join»** — video will begin streaming from the host from the current playback position!
+3. Paste the complete invitation link or Connection Code and enter your display name.
+4. Click **«Join»** — your local movie follows the room playback position after the host confirms the connection.
 
 ---
 

@@ -1,4 +1,6 @@
 pub mod ffi;
+mod software;
+pub use software::SoftwareRenderer;
 #[cfg(target_os = "macos")]
 mod macos;
 

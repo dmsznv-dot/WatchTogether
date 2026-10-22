@@ -16,6 +16,11 @@ fn current_time_ms() -> u64 {
 
 /// Opens a video file or stream URL.
 pub async fn cmd_player_open_file(state: &AppState, path: String) -> Result<PlayerState, AppError> {
+    if state.live_room.lock().await.is_some() {
+        return Err(AppError::Internal(
+            "Leave the room before changing the movie".into(),
+        ));
+    }
     state.player.open_file(&path)?;
     let mut p_state = state.player.get_state()?;
     if p_state.current_file.is_none() {
@@ -30,6 +35,16 @@ pub async fn player_open_file(state: &AppState, path: String) -> Result<PlayerSt
 
 /// Plays the media stream. Synchronizes with active room if present.
 pub async fn cmd_player_play(state: &AppState) -> Result<(), AppError> {
+    if let Some(session) = state.live_room.lock().await.clone() {
+        return session
+            .command(ClientMessage::PlaybackPlay {
+                revision: 0,
+                client_timestamp_ms: current_time_ms(),
+            })
+            .await
+            .map_err(AppError::Internal);
+    }
+
     let now_ms = current_time_ms();
     let mut session_guard = state.session.write().await;
     match &mut *session_guard {
@@ -68,6 +83,17 @@ pub async fn player_play(state: &AppState) -> Result<(), AppError> {
 
 /// Pauses the media stream. Synchronizes with active room if present.
 pub async fn cmd_player_pause(state: &AppState) -> Result<(), AppError> {
+    if let Some(session) = state.live_room.lock().await.clone() {
+        return session
+            .command(ClientMessage::PlaybackPause {
+                revision: 0,
+                position_ms: state.player.get_state()?.position_ms,
+                client_timestamp_ms: current_time_ms(),
+            })
+            .await
+            .map_err(AppError::Internal);
+    }
+
     let now_ms = current_time_ms();
     let cur_pos = state.player.get_state()?.position_ms;
     let mut session_guard = state.session.write().await;
@@ -112,6 +138,17 @@ pub async fn cmd_player_seek(
     position_seconds: f64,
     exact: bool,
 ) -> Result<(), AppError> {
+    if let Some(session) = state.live_room.lock().await.clone() {
+        return session
+            .command(ClientMessage::PlaybackSeek {
+                revision: 0,
+                target_position_ms: (position_seconds * 1000.0).max(0.0) as u64,
+                client_timestamp_ms: current_time_ms(),
+            })
+            .await
+            .map_err(AppError::Internal);
+    }
+
     let position_ms = (position_seconds * 1000.0).max(0.0) as u64;
     let now_ms = current_time_ms();
     let mut session_guard = state.session.write().await;
@@ -157,6 +194,17 @@ pub async fn player_seek(
 
 /// Sets playback speed multiplier (0.5x, 0.75x, 1x, 1.25x, 1.5x, 2x).
 pub async fn cmd_player_set_speed(state: &AppState, speed: f64) -> Result<(), AppError> {
+    if let Some(session) = state.live_room.lock().await.clone() {
+        return session
+            .command(ClientMessage::PlaybackSpeed {
+                revision: 0,
+                speed: speed as f32,
+                client_timestamp_ms: current_time_ms(),
+            })
+            .await
+            .map_err(AppError::Internal);
+    }
+
     let speed_f32 = speed as f32;
     if !is_valid_speed(speed_f32) {
         return Err(AppError::InvalidSpeed(speed_f32));

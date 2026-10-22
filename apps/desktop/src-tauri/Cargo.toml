@@ -24,6 +24,8 @@ futures = { workspace = true }
 tauri = { version = "2", default-features = false, features = ["wry", "macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [build-dependencies]
 tauri-build = { version = "2", default-features = false , features = [] }
@@ -31,4 +33,3 @@ tauri-build = { version = "2", default-features = false , features = [] }
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-

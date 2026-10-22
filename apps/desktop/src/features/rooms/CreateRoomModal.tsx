@@ -3,7 +3,7 @@ import { Copy, Check, Users, Shield, Link2, Trash2 } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { PermissionMode } from '../../types/room';
-import { createShareableLink } from '../../utils/deepLink';
+import { createShareableLink, createConnectionCode } from '../../utils/deepLink';
 
 export interface CreateRoomModalProps {
   isOpen: boolean;
@@ -12,6 +12,7 @@ export interface CreateRoomModalProps {
   roomToken: string | null;
   initialHostName: string;
   isLoading: boolean;
+  error?: string | null;
   onCreateRoom: (hostName: string, permissionMode: PermissionMode) => Promise<unknown>;
   onEndRoom: () => Promise<unknown>;
 }
@@ -23,21 +24,24 @@ export function CreateRoomModal({
   roomToken,
   initialHostName,
   isLoading,
+  error,
   onCreateRoom,
   onEndRoom,
 }: CreateRoomModalProps) {
+  const [hostAddr, setHostAddr] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
   const [hostName, setHostName] = useState(initialHostName || 'Host');
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('free_control');
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
   const shareableLink =
-    roomCode && roomToken ? createShareableLink(roomCode, roomToken) : '';
+    roomCode && roomToken && hostAddr.trim() ? createShareableLink(roomCode, roomToken, hostAddr) : '';
 
   const handleCopyCode = async () => {
-    if (!roomCode) return;
+    if (!roomCode || !roomToken || !hostAddr.trim()) return;
     try {
-      await navigator.clipboard.writeText(roomCode);
+      await navigator.clipboard.writeText(createConnectionCode(roomCode, roomToken, hostAddr));
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 2000);
     } catch {
@@ -57,7 +61,8 @@ export function CreateRoomModal({
   };
 
   const handleCreate = async () => {
-    await onCreateRoom(hostName.trim() || 'Host', permissionMode);
+    setLocalError(null);
+    try { await onCreateRoom(hostName.trim() || 'Host', permissionMode); } catch (err) { setLocalError(String(err)); }
   };
 
   return (
@@ -72,6 +77,12 @@ export function CreateRoomModal({
       }
     >
       <div className="flex flex-col gap-5 pt-2">
+        {(error || localError) && <div role="alert" className="text-sm text-rose-300">{localError || error}</div>}
+        <p className="text-xs text-zinc-400">Each person opens their own copy of the movie. This computer runs the sync server while the room is open.</p>
+        <label className="text-xs text-zinc-400">Host address for invitations (IP or hostname, port 8999)
+          <input data-testid="host-address-input" value={hostAddr} onChange={e => setHostAddr(e.target.value)} placeholder="203.0.113.4:8999" className="mt-1 w-full p-2 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100" />
+        </label>
+        <p className="text-xs text-zinc-400">Internet: allow TCP 8999 through the host firewall and forward it on the router, or use a shared VPN. The short room code alone does not locate a computer.</p>
         {!roomCode ? (
           // Pre-creation form
           <>
@@ -158,6 +169,7 @@ export function CreateRoomModal({
                 variant="secondary"
                 size="sm"
                 onClick={handleCopyCode}
+                disabled={!hostAddr.trim()}
                 className="mt-3"
                 data-testid="copy-code-btn"
               >
@@ -169,7 +181,7 @@ export function CreateRoomModal({
                 ) : (
                   <>
                     <Copy className="w-3.5 h-3.5" />
-                    <span>Copy Code</span>
+                    <span>Copy Connection Code</span>
                   </>
                 )}
               </Button>
@@ -191,6 +203,7 @@ export function CreateRoomModal({
                   variant="secondary"
                   size="sm"
                   onClick={handleCopyLink}
+                  disabled={!shareableLink}
                   className="shrink-0"
                   data-testid="copy-link-btn"
                 >

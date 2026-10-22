@@ -1,6 +1,27 @@
 {
   "bundle": {
-    "targets": ["msi", "nsis"],
-    "resources": { "mpv-2.dll": "mpv-2.dll" }
+    "targets": [
+      "msi",
+      "nsis"
+    ],
+    "resources": {
+      "mpv-2.dll": "mpv-2.dll"
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Watch Together",
+        "label": "main",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 640,
+        "minHeight": 360,
+        "resizable": true,
+        "transparent": false,
+        "backgroundColor": "#000000",
+        "center": true
+      }
+    ]
   }
 }

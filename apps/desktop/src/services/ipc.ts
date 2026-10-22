@@ -121,12 +121,14 @@ export const roomApi = {
   join: (
     roomCode: string,
     roomToken: string,
-    displayName?: string
+    displayName?: string,
+    hostAddr?: string
   ): Promise<RoomJoinResponse> =>
     invokeCommand<RoomJoinResponse>('cmd_room_join', {
       roomCode,
       roomToken,
       displayName,
+      hostAddr,
     }),
 
   leave: (): Promise<void> => invokeCommand<void>('cmd_room_leave'),
@@ -139,6 +141,9 @@ export const roomApi = {
 
   kickParticipant: (targetId: string): Promise<void> =>
     invokeCommand<void>('cmd_room_kick_participant', { targetId }),
+
+  onError: (callback: (payload: {code: string; message: string}) => void): Promise<() => void> =>
+    listenEvent('room://error', callback),
 
   onUpdate: (callback: (payload: RoomUpdatePayload) => void): Promise<() => void> =>
     listenEvent<RoomUpdatePayload>('room://update', callback),

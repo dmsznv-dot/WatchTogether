@@ -173,7 +173,6 @@ impl MpvApi {
         }))
     }
 
-    #[cfg(target_os = "macos")]
     pub(super) unsafe fn render_symbol(
         &self,
         name: &[u8],

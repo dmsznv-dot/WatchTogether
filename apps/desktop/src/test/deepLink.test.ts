@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { createShareableLink, parseJoinInput } from '../utils/deepLink';
+import { createShareableLink, createConnectionCode, parseJoinInput } from '../utils/deepLink';
 
 describe('Deep Link Utilities', () => {
+  it('round-trips a complete connection code without a directory server', () => {
+    const code = createConnectionCode('K7M2P9', 'a'.repeat(64), '192.168.1.25:8999');
+    expect(parseJoinInput(code)).toEqual({roomCode:'K7M2P9',roomToken:'a'.repeat(64),hostAddr:'192.168.1.25:8999',isUrl:true});
+    expect(parseJoinInput('WT1-broken').roomCode).toBe('');
+  });
+  it('preserves host endpoint and credentials in an invitation', () => {
+    const link = createShareableLink('K7M2P9', 'a'.repeat(64), '203.0.113.4:8999');
+    expect(parseJoinInput(link)).toMatchObject({roomCode:'K7M2P9',roomToken:'a'.repeat(64),hostAddr:'203.0.113.4:8999'});
+  });
   it('generates shareable deep links matching schema', () => {
     const link = createShareableLink('K7M2P9', '0123456789abcdef0123456789abcdef');
     expect(link).toBe(

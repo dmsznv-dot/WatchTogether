@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/Button';
 import { PlayPauseRipple } from './PlayPauseRipple';
 import { hasTauri } from '../../services/ipc';
 import { cn } from '../../utils/cn';
+import { WindowsVideo, usesWindowsCanvas } from './WindowsVideo';
 
 export interface VideoCanvasProps {
   currentFile: string | null;
@@ -151,6 +152,8 @@ export function VideoCanvas({
               Open Video File
             </Button>
           </div>
+        ) : native && usesWindowsCanvas() ? (
+          <WindowsVideo key={currentFile} />
         ) : native ? (
           <div data-testid="media-surface" className="absolute inset-0 bg-transparent" aria-label="Video" />
         ) : (
