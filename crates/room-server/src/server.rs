@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex, RwLock};
 
 pub fn current_time_ms() -> u64 {
     std::time::SystemTime::now()
@@ -95,17 +95,26 @@ pub struct RoomServerHandle {
     pub manager: Arc<RoomManager>,
     pub shutdown_tx: Option<oneshot::Sender<()>>,
     pub join_handle: tokio::task::JoinHandle<()>,
+    shutdown_sockets: watch::Sender<bool>,
 }
 
 impl RoomServerHandle {
     pub async fn shutdown(mut self) -> Result<(), RoomServerError> {
+        let _ = self.shutdown_sockets.send(true);
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
-        self.join_handle
+        (&mut self.join_handle)
             .await
             .map_err(|e| RoomServerError::Internal(e.to_string()))?;
         Ok(())
+    }
+}
+
+impl Drop for RoomServerHandle {
+    fn drop(&mut self) {
+        let _ = self.shutdown_sockets.send(true);
+        self.join_handle.abort();
     }
 }
 
@@ -132,10 +141,22 @@ impl RoomServer {
         manager: Arc<RoomManager>,
         allow_create: bool,
     ) -> Result<RoomServerHandle, RoomServerError> {
+        let (shutdown_sockets, sockets_closed) = watch::channel(false);
+        let close_on_shutdown = shutdown_sockets.clone();
         let app = Router::new()
-            .route("/ws", get(move |ws: WebSocketUpgrade, State(manager): State<Arc<RoomManager>>| async move {
-                ws.max_message_size(64 * 1024).on_upgrade(move |socket| handle_socket(socket, manager, allow_create))
-            }))
+            .route(
+                "/ws",
+                get(
+                    move |ws: WebSocketUpgrade, State(manager): State<Arc<RoomManager>>| {
+                        let sockets_closed = sockets_closed.clone();
+                        async move {
+                            ws.max_message_size(64 * 1024).on_upgrade(move |socket| {
+                                handle_socket(socket, manager, allow_create, sockets_closed)
+                            })
+                        }
+                    },
+                ),
+            )
             .with_state(Arc::clone(&manager));
 
         let listener = TcpListener::bind(bind_addr).await?;
@@ -146,6 +167,7 @@ impl RoomServer {
             axum::serve(listener, app)
                 .with_graceful_shutdown(async move {
                     let _ = shutdown_rx.await;
+                    let _ = close_on_shutdown.send(true);
                 })
                 .await
                 .unwrap_or_default();
@@ -156,6 +178,7 @@ impl RoomServer {
             manager,
             shutdown_tx: Some(shutdown_tx),
             join_handle,
+            shutdown_sockets,
         })
     }
 
@@ -164,7 +187,15 @@ impl RoomServer {
     }
 }
 
-async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>, allow_create: bool) {
+async fn handle_socket(
+    socket: WebSocket,
+    manager: Arc<RoomManager>,
+    allow_create: bool,
+    mut closed: watch::Receiver<bool>,
+) {
+    if *closed.borrow() {
+        return;
+    }
     let (mut ws_sink, mut ws_stream) = socket.split();
     let (tx_direct, mut rx_direct) = mpsc::unbounded_channel::<ServerMessage>();
 
@@ -175,6 +206,12 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>, allow_creat
 
     loop {
         tokio::select! {
+            biased;
+            _ = closed.changed() => {
+                let _ = tokio::time::timeout(std::time::Duration::from_millis(100), ws_sink.send(Message::Close(None))).await;
+                break;
+            }
+
             // Direct messages to this client
             Some(msg) = rx_direct.recv() => {
                 let is_kick_or_close = matches!(
@@ -324,7 +361,7 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>, allow_creat
                             Ok(ClientMessage::PlaybackPlay { revision, .. }) => {
                                 if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
                                     let mut room = room_arc.lock().await;
-                                    let revision = if revision == 0 && !allow_create { room.playback.revision + 1 } else { revision };
+                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
                                     if let Err(err) = room.apply_play(p_id, revision, now_ms) {
                                         let _ = tx_direct.send(ServerMessage::Error {
                                             code: err.to_error_code().as_str().to_string(),
@@ -336,7 +373,7 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>, allow_creat
                             Ok(ClientMessage::PlaybackPause { revision, position_ms, .. }) => {
                                 if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
                                     let mut room = room_arc.lock().await;
-                                    let revision = if revision == 0 && !allow_create { room.playback.revision + 1 } else { revision };
+                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
                                     if let Err(err) = room.apply_pause(p_id, revision, position_ms, now_ms) {
                                         let _ = tx_direct.send(ServerMessage::Error {
                                             code: err.to_error_code().as_str().to_string(),
@@ -348,7 +385,7 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>, allow_creat
                             Ok(ClientMessage::PlaybackSeek { revision, target_position_ms, .. }) => {
                                 if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
                                     let mut room = room_arc.lock().await;
-                                    let revision = if revision == 0 && !allow_create { room.playback.revision + 1 } else { revision };
+                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
                                     if let Err(err) = room.apply_seek(p_id, revision, target_position_ms, now_ms) {
                                         let _ = tx_direct.send(ServerMessage::Error {
                                             code: err.to_error_code().as_str().to_string(),
@@ -360,7 +397,7 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>, allow_creat
                             Ok(ClientMessage::PlaybackSpeed { revision, speed, .. }) => {
                                 if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
                                     let mut room = room_arc.lock().await;
-                                    let revision = if revision == 0 && !allow_create { room.playback.revision + 1 } else { revision };
+                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
                                     if let Err(err) = room.apply_speed(p_id, revision, speed, now_ms) {
                                         let _ = tx_direct.send(ServerMessage::Error {
                                             code: err.to_error_code().as_str().to_string(),

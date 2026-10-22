@@ -128,3 +128,42 @@ async fn host_only_blocks_guest_controls_and_close_releases_port() {
     host.close().await;
     tokio::net::TcpListener::bind(addr).await.unwrap();
 }
+
+#[tokio::test]
+async fn closing_host_also_closes_sockets_that_have_not_joined() {
+    use futures_util::StreamExt;
+    let player = Arc::new(HeadlessPlayer::new());
+    player.open_file("movie.mkv").unwrap();
+    let host = LocalSession::host(
+        player,
+        "127.0.0.1:0".parse().unwrap(),
+        "Host".into(),
+        PermissionMode::FreeControl,
+    )
+    .await
+    .unwrap();
+    let (mut socket, _) = tokio_tungstenite::connect_async(&host.endpoint)
+        .await
+        .unwrap();
+    host.close().await;
+    let closed = tokio::time::timeout(Duration::from_secs(2), socket.next()).await;
+    assert!(
+        closed.is_ok(),
+        "an unjoined upgraded socket must not outlive the room"
+    );
+}
+
+#[tokio::test]
+async fn guest_supplied_max_revision_cannot_disable_host_controls() {
+    let a=Arc::new(HeadlessPlayer::new());a.open_file("movie.mkv").unwrap();
+    let b=Arc::new(HeadlessPlayer::new());b.open_file("movie.mkv").unwrap();
+    let host=LocalSession::host(a.clone(),"127.0.0.1:0".parse().unwrap(),"Host".into(),PermissionMode::FreeControl).await.unwrap();
+    let guest=LocalSession::join(b,&host.endpoint,&host.room_code(),&host.token,"Guest".into()).await.unwrap();
+    guest.command(ClientMessage::PlaybackSeek{revision:u64::MAX,target_position_ms:12000,client_timestamp_ms:0}).await.unwrap();
+    wait_until(||a.get_state().unwrap().position_ms==12000).await;
+    assert!(host.snapshot().playback.revision<100);
+    host.command(ClientMessage::PlaybackPause{revision:0,position_ms:13000,client_timestamp_ms:0}).await.unwrap();
+    drop(host);
+    wait_until(||!guest.is_connected()).await;
+    guest.close().await;
+}

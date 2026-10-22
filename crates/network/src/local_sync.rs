@@ -307,7 +307,7 @@ impl LocalSession {
                                         other=>{
                                             let mut s=shared.lock().unwrap();
                                             match other {
-                                                ServerMessage::RoomState(snapshot)=>{force=snapshot.playback.revision!=s.playback.revision;*s=snapshot;},
+                                                ServerMessage::RoomState(snapshot)=>{force=accept_snapshot(&mut s,snapshot);},
                                                 ServerMessage::PlaybackUpdated{revision,status,position_ms,speed,updated_at_server_ms,..}=>{if revision>s.playback.revision {s.playback=PlaybackState{revision,status,position_ms,speed,updated_at_server_ms,duration_ms:s.video.duration_ms};force=true;}},
                                                 ServerMessage::ParticipantJoined(p)=>{s.participants.retain(|old|old.id!=p.id);s.participants.push(p);},
                                                 ServerMessage::ParticipantLeft{participant_id,..}|ServerMessage::ParticipantKicked{participant_id,..}=>s.participants.retain(|p|p.id!=participant_id),
@@ -361,7 +361,11 @@ impl LocalSession {
             .await
             .ok_or("Room closed")?;
         let mut r = room.lock().await;
-        let rev = r.playback.revision + 1;
+        let rev = r
+            .playback
+            .revision
+            .checked_add(1)
+            .ok_or("Room revision limit reached")?;
         let id = r.host_id.clone();
         let t = now();
         let result = match command {
@@ -408,16 +412,8 @@ impl LocalSession {
             task.abort();
         }
         let server = self.server.lock().unwrap().take();
-        if let Some(mut server) = server {
-            if let Some(tx) = server.shutdown_tx.take() {
-                let _ = tx.send(());
-            }
-            if tokio::time::timeout(Duration::from_secs(2), &mut server.join_handle)
-                .await
-                .is_err()
-            {
-                server.join_handle.abort();
-            }
+        if let Some(server) = server {
+            let _ = tokio::time::timeout(Duration::from_secs(2), server.shutdown()).await;
         }
         let _ = self.player.pause();
         let _ = self.events.send(SessionEvent::Disconnected);
@@ -500,5 +496,52 @@ pub fn normalize_endpoint(raw: &str) -> Result<String, String> {
         Ok(format!("{}/ws", endpoint.trim_end_matches('/')))
     } else {
         Ok(endpoint)
+    }
+}
+
+// Direct polling replies and broadcasts have independent queues. Never roll back
+// a newer timeline when a previously queued polling response arrives late.
+fn accept_snapshot(current: &mut RoomStateSnapshot, incoming: RoomStateSnapshot) -> bool {
+    let a = &current.playback;
+    let b = &incoming.playback;
+    if b.revision < a.revision
+        || (b.revision == a.revision && b.updated_at_server_ms < a.updated_at_server_ms)
+    {
+        return false;
+    }
+    let changed = b.revision > a.revision;
+    *current = incoming;
+    changed
+}
+
+#[cfg(test)]
+mod snapshot_order_tests {
+    use super::*;
+    #[test]
+    fn late_poll_cannot_resume_a_newer_pause_or_rewind_the_timeline() {
+        let video = VideoMetadata {
+            filename: "movie.mkv".into(),
+            duration_ms: 60000,
+            file_size_bytes: 1,
+            mime_type: "video/mp4".into(),
+            width: None,
+            height: None,
+        };
+        let (room, _) =
+            room_server::room::Room::new("Host", video, PermissionMode::FreeControl, 5, 1000);
+        let mut current = room.get_snapshot(1000);
+        let mut old = current.clone();
+        old.playback.status = PlaybackStatus::Playing;
+        current.playback.revision = 2;
+        current.playback.position_ms = 20000;
+        current.playback.updated_at_server_ms = 2000;
+        assert!(!accept_snapshot(&mut current, old));
+        assert_eq!(current.playback.status, PlaybackStatus::Paused);
+        assert_eq!(current.playback.position_ms, 20000);
+        let mut old_time = current.clone();
+        old_time.playback.updated_at_server_ms = 1500;
+        old_time.playback.position_ms = 15000;
+        assert!(!accept_snapshot(&mut current, old_time));
+        assert_eq!(current.playback.position_ms, 20000);
     }
 }
