@@ -84,6 +84,11 @@ jobs:
         working-directory: apps/desktop
         run: cargo tauri build ${{ matrix.args }}
 
+      - name: Verify Windows installer and bundled media runtime
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/smoke_windows_installer.ps1
+
       - name: Bundle macOS media libraries and create DMG
         if: matrix.platform == 'macos-latest'
         run: |

@@ -1,0 +1,94 @@
+name: Publish Windows Release
+
+on:
+  workflow_run:
+    workflows: ["Build & Release"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Completed Build & Release run containing the Windows artifact"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: publish-release-${{ github.event.workflow_run.head_sha || inputs.run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify completed Windows build and download installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > /tmp/source-run.json
+          python3 - <<'PY'
+          import json, os
+          r = json.load(open("/tmp/source-run.json"))
+          assert r["head_branch"] == "main" and r["status"] == "completed"
+          assert r["head_repository"]["full_name"] == os.environ["GITHUB_REPOSITORY"]
+          assert r["name"] == "Build & Release"
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write("SOURCE_SHA=" + r["head_sha"] + "\n")
+              f.write("SOURCE_RUN_URL=" + r["html_url"] + "\n")
+          PY
+          status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[] | select(.name | startswith("test-and-build (windows-latest")) | .conclusion')"
+          test "$status" = success
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name watch-together-windows-latest --dir artifact
+          test -d artifact/nsis
+
+      - name: Package Windows installer and ZIP
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil, zipfile
+          root = pathlib.Path("release")
+          root.mkdir()
+          installers = list(pathlib.Path("artifact/nsis").glob("*.exe"))
+          assert len(installers) == 1, installers
+          exe = root / "WatchTogether-Windows-x64-Setup.exe"
+          shutil.copy2(installers[0], exe)
+          assert exe.stat().st_size > 0 and exe.read_bytes()[:2] == b"MZ"
+          shutil.copy2("docs/RELEASE_NOTES.md", root / "README.txt")
+          (root / "BUILD.json").write_text(json.dumps({
+              "commit": os.environ["SOURCE_SHA"], "build": os.environ["SOURCE_RUN_URL"]
+          }, indent=2) + "\n")
+          archive = root / "WatchTogether-Windows-x64.zip"
+          with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as z:
+              for name in [exe.name, "README.txt", "BUILD.json"]:
+                  z.write(root / name, name)
+          with zipfile.ZipFile(archive) as z:
+              assert z.testzip() is None and exe.name in z.namelist()
+          (root / "SHA256SUMS-Windows.txt").write_text("".join(
+              hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n"
+              for p in [exe, archive]))
+          PY
+
+      - name: Publish EXE, ZIP and checksums in GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="preview-${SOURCE_SHA:0:7}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/WatchTogether-Windows-x64-Setup.exe release/WatchTogether-Windows-x64.zip release/SHA256SUMS-Windows.txt --clobber
+          else
+            gh release create "$tag" release/WatchTogether-Windows-x64-Setup.exe release/WatchTogether-Windows-x64.zip release/SHA256SUMS-Windows.txt --target "$SOURCE_SHA" --title "Watch Together — preview (${SOURCE_SHA:0:7})" --notes-file docs/RELEASE_NOTES.md --prerelease
+          fi
+          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"

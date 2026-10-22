@@ -7,9 +7,7 @@ use media_stream::MediaServerHandle;
 use network::LoopbackProxyHandle;
 use room_server::{RoomManager, RoomServerHandle};
 use shared_protocol::messages::ClientMessage;
-use shared_protocol::models::{
-    ParticipantId, RoomCode, RoomId, RoomToken, VideoMetadata,
-};
+use shared_protocol::models::{ParticipantId, RoomCode, RoomId, RoomToken, VideoMetadata};
 use sync_engine::ClientSyncCoordinator;
 
 use crate::error::AppError;
@@ -63,6 +61,46 @@ pub struct TimePosThrottler {
     min_interval: std::time::Duration,
 }
 
+#[cfg(test)]
+mod time_pos_throttler_tests {
+    use super::TimePosThrottler;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn continuous_updates_obey_the_exact_250ms_boundary() {
+        let mut throttler = TimePosThrottler::new();
+        let start = Instant::now();
+        assert!(throttler.should_emit_at(start));
+        for i in 1..=100 {
+            assert!(!throttler.should_emit_at(start + Duration::from_micros(i * 500)));
+        }
+        assert!(!throttler.should_emit_at(start + Duration::from_micros(249_999)));
+        assert!(throttler.should_emit_at(start + Duration::from_millis(250)));
+        assert!(!throttler.should_emit_at(start + Duration::from_millis(250)));
+        assert!(!throttler.should_emit_at(start + Duration::from_micros(499_999)));
+        assert!(throttler.should_emit_at(start + Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn sparse_updates_do_not_build_up_emission_credits() {
+        let mut throttler = TimePosThrottler::new();
+        let start = Instant::now();
+        assert!(throttler.should_emit_at(start));
+        assert!(throttler.should_emit_at(start + Duration::from_secs(10)));
+        assert!(!throttler.should_emit_at(start + Duration::from_millis(10_249)));
+        assert!(throttler.should_emit_at(start + Duration::from_millis(10_250)));
+    }
+
+    #[test]
+    fn forced_emission_restarts_the_throttle_interval() {
+        let mut throttler = TimePosThrottler::new();
+        throttler.force_emit();
+        let forced_at = throttler.last_emitted_instant.unwrap();
+        assert!(!throttler.should_emit_at(forced_at + Duration::from_micros(249_999)));
+        assert!(throttler.should_emit_at(forced_at + Duration::from_millis(250)));
+    }
+}
+
 impl Default for TimePosThrottler {
     fn default() -> Self {
         Self::new()
@@ -78,7 +116,10 @@ impl TimePosThrottler {
     }
 
     pub fn should_emit(&mut self) -> bool {
-        let now = std::time::Instant::now();
+        self.should_emit_at(std::time::Instant::now())
+    }
+
+    fn should_emit_at(&mut self, now: std::time::Instant) -> bool {
         match self.last_emitted_instant {
             Some(last) if now.duration_since(last) < self.min_interval => false,
             _ => {
@@ -160,16 +201,28 @@ impl AppState {
 
                         let mut session_guard = this.session.write().await;
                         if let SessionState::Host(host) = &mut *session_guard {
-                            if let Some(room_arc) = host.room_manager.get_room_by_id(&host.room_id).await {
+                            if let Some(room_arc) =
+                                host.room_manager.get_room_by_id(&host.room_id).await
+                            {
                                 let mut room = room_arc.lock().await;
-                                let is_room_playing = room.playback.status == shared_protocol::models::PlaybackStatus::Playing;
+                                let is_room_playing = room.playback.status
+                                    == shared_protocol::models::PlaybackStatus::Playing;
                                 if is_playing != is_room_playing {
                                     let next_rev = room.playback.revision + 1;
                                     if is_playing {
                                         let _ = room.apply_play(&host.host_id, next_rev, now_ms);
                                     } else {
-                                        let cur_pos = this.player.get_state().map(|s| s.position_ms).unwrap_or(0);
-                                        let _ = room.apply_pause(&host.host_id, next_rev, cur_pos, now_ms);
+                                        let cur_pos = this
+                                            .player
+                                            .get_state()
+                                            .map(|s| s.position_ms)
+                                            .unwrap_or(0);
+                                        let _ = room.apply_pause(
+                                            &host.host_id,
+                                            next_rev,
+                                            cur_pos,
+                                            now_ms,
+                                        );
                                     }
                                 }
                             }

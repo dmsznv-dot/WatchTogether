@@ -9,7 +9,7 @@ use watch_together_desktop::commands::player::*;
 use watch_together_desktop::commands::room::*;
 use watch_together_desktop::error::AppError;
 use watch_together_desktop::events::MockEventSink;
-use watch_together_desktop::state::{AppState, SessionState, TimePosThrottler};
+use watch_together_desktop::state::{AppState, SessionState};
 
 const VALID_TOKEN_32: &str = "0123456789ABCDEF0123456789ABCDEF";
 
@@ -19,7 +19,10 @@ const VALID_TOKEN_32: &str = "0123456789ABCDEF0123456789ABCDEF";
 #[tokio::test]
 async fn test_adversarial_lifecycle_teardown_cascade_stress() {
     let test_file = "/tmp/adversarial_cascade_test.mp4";
-    let _ = std::fs::write(test_file, b"ADVERSARIAL_VIDEO_STREAM_BYTES_FOR_TESTING_1234567890");
+    let _ = std::fs::write(
+        test_file,
+        b"ADVERSARIAL_VIDEO_STREAM_BYTES_FOR_TESTING_1234567890",
+    );
 
     for cycle in 1..=3 {
         println!("Starting Teardown Cascade Cycle {cycle}/3...");
@@ -81,9 +84,7 @@ async fn test_adversarial_lifecycle_teardown_cascade_stress() {
         }
 
         // 5. Host leaves room -> AppState::teardown cascade executes
-        cmd_room_leave(&state)
-            .await
-            .expect("cmd_room_leave failed");
+        cmd_room_leave(&state).await.expect("cmd_room_leave failed");
 
         // Verify session state is reset to Solo
         {
@@ -149,8 +150,8 @@ async fn test_adversarial_room_code_normalization_and_fuzzing() {
 
     // 3. Crockford Base32 excluded characters: '0', '1', 'I', 'O'
     let excluded_codes = [
-        "K7M2P0", "07M2P9", "K7M2P1", "17M2P9", "K7M2PI", "I7M2P9", "K7M2PO", "O7M2P9",
-        "k7m2p0", "k7m2p1", "k7m2pi", "k7m2po",
+        "K7M2P0", "07M2P9", "K7M2P1", "17M2P9", "K7M2PI", "I7M2P9", "K7M2PO", "O7M2P9", "k7m2p0",
+        "k7m2p1", "k7m2pi", "k7m2po",
     ];
     for code in excluded_codes {
         let err = cmd_room_join(&state, code.into(), VALID_TOKEN_32.into(), None, None).await;
@@ -180,15 +181,15 @@ async fn test_adversarial_room_code_normalization_and_fuzzing() {
 
     // 5. Length edge cases
     let length_edge_cases = [
-        "",                             // Empty
-        "   ",                          // Whitespace only
-        "K",                            // 1 char
-        "K7",                           // 2 chars
-        "K7M",                          // 3 chars
-        "K7M2",                         // 4 chars
-        "K7M2P",                        // 5 chars
-        "K7M2P9A",                      // 7 chars
-        "K7M2P9ABCDEF",                 // 12 chars
+        "",             // Empty
+        "   ",          // Whitespace only
+        "K",            // 1 char
+        "K7",           // 2 chars
+        "K7M",          // 3 chars
+        "K7M2",         // 4 chars
+        "K7M2P",        // 5 chars
+        "K7M2P9A",      // 7 chars
+        "K7M2P9ABCDEF", // 12 chars
     ];
     for code in length_edge_cases {
         let err = cmd_room_join(&state, code.into(), VALID_TOKEN_32.into(), None, None).await;
@@ -336,41 +337,25 @@ async fn test_adversarial_permission_bypass_attack() {
 /// vs immediate emission on seek or state transitions.
 #[tokio::test]
 async fn test_adversarial_event_throttler_rate_precision() {
-    // Part A: Unit stress of TimePosThrottler under continuous high-frequency updates
-    let mut throttler = TimePosThrottler::new();
-
-    // 1st update should emit
-    assert!(
-        throttler.should_emit(),
-        "Initial update should emit immediately"
-    );
-
-    // Next 100 rapid updates across 50ms must all be throttled
-    let mut throttled_count = 0;
-    for _ in 0..100 {
-        if !throttler.should_emit() {
-            throttled_count += 1;
-        }
-        sleep(Duration::from_micros(500)).await; // 500us * 100 = 50ms
+    async fn wait_for_state(sink: &MockEventSink, key: &str, expected: serde_json::Value) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if sink
+                    .last_event("player://state-change")
+                    .and_then(|payload| payload.get(key).cloned())
+                    == Some(expected.clone())
+                {
+                    return;
+                }
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("player state change did not arrive before the deadline");
     }
-    assert_eq!(
-        throttled_count, 100,
-        "All 100 rapid continuous updates within 50ms should have been throttled"
-    );
 
-    // After waiting 260ms (> 250ms min_interval), next update MUST emit
-    sleep(Duration::from_millis(260)).await;
-    assert!(
-        throttler.should_emit(),
-        "Update after 260ms should emit successfully"
-    );
-
-    // Immediate subsequent update (< 250ms) must be throttled
-    assert!(
-        !throttler.should_emit(),
-        "Immediate subsequent update should be throttled"
-    );
-
+    // The exact 250ms boundaries are covered by deterministic unit tests in state.rs.
+    // Real sleeps cannot represent 500us ticks on every OS or under CI load.
     // Part B: State changes emit immediately through EventSink
     let event_sink = Arc::new(MockEventSink::new());
     let player = Arc::new(media_engine::HeadlessPlayer::new());
@@ -378,20 +363,20 @@ async fn test_adversarial_event_throttler_rate_precision() {
 
     // Play -> state change emitted immediately
     cmd_player_play(&state).await.unwrap();
-    sleep(Duration::from_millis(20)).await;
+    wait_for_state(&event_sink, "is_playing", serde_json::json!(true)).await;
     assert!(event_sink.has_event("player://state-change"));
     let last = event_sink.last_event("player://state-change").unwrap();
     assert_eq!(last["is_playing"], true);
 
     // Pause -> state change emitted immediately
     cmd_player_pause(&state).await.unwrap();
-    sleep(Duration::from_millis(20)).await;
+    wait_for_state(&event_sink, "is_playing", serde_json::json!(false)).await;
     let last_pause = event_sink.last_event("player://state-change").unwrap();
     assert_eq!(last_pause["is_playing"], false);
 
     // Speed -> state change emitted immediately
     cmd_player_set_speed(&state, 1.5).await.unwrap();
-    sleep(Duration::from_millis(20)).await;
+    wait_for_state(&event_sink, "speed", serde_json::json!(1.5)).await;
     let last_speed = event_sink.last_event("player://state-change").unwrap();
     assert_eq!(last_speed["speed"], 1.5);
 
@@ -443,7 +428,8 @@ async fn test_adversarial_concurrent_ipc_flooding() {
     }
 
     // Join all with a 5-second timeout to detect deadlocks
-    let timeout_res = tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(handles)).await;
+    let timeout_res =
+        tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(handles)).await;
     assert!(
         timeout_res.is_ok(),
         "Deadlock detected during 50 concurrent Solo IPC calls!"
@@ -478,8 +464,11 @@ async fn test_adversarial_concurrent_ipc_flooding() {
         host_handles.push(handle);
     }
 
-    let host_timeout_res =
-        tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(host_handles)).await;
+    let host_timeout_res = tokio::time::timeout(
+        Duration::from_secs(5),
+        futures::future::join_all(host_handles),
+    )
+    .await;
     assert!(
         host_timeout_res.is_ok(),
         "Deadlock detected during 50 concurrent Host IPC calls!"

@@ -23,7 +23,7 @@ jobs:
       contents: write
       actions: read
     concurrency:
-      group: publish-macos-${{ github.event.workflow_run.head_sha || inputs.run_id }}
+      group: publish-release-${{ github.event.workflow_run.head_sha || inputs.run_id }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -85,6 +85,6 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release/Watch_Together_macOS.dmg release/WatchTogether-macOS.zip release/SHA256SUMS.txt --clobber
           else
-            gh release create "$tag" release/Watch_Together_macOS.dmg release/WatchTogether-macOS.zip release/SHA256SUMS.txt --target "$SOURCE_SHA" --title "Watch Together — macOS (${SOURCE_SHA:0:7})" --notes-file docs/RELEASE_NOTES.md --prerelease
+            gh release create "$tag" release/Watch_Together_macOS.dmg release/WatchTogether-macOS.zip release/SHA256SUMS.txt --target "$SOURCE_SHA" --title "Watch Together — preview (${SOURCE_SHA:0:7})" --notes-file docs/RELEASE_NOTES.md --prerelease
           fi
           echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
