@@ -14,9 +14,9 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest'
-            args: '--bundles app,dmg --no-sign'
+            args: '--bundles app --no-sign'
           - platform: 'windows-latest'
-            args: '--bundles msi,nsis'
+            args: '--bundles msi,nsis --config src-tauri/tauri.windows.conf.json'
 
     runs-on: ${{ matrix.platform }}
 
@@ -48,6 +48,14 @@ jobs:
         run: |
           brew install mpv
 
+      - name: Install Windows test media tools
+        if: matrix.platform == 'windows-latest'
+        run: choco install ffmpeg --no-progress -y
+
+      - name: Prepare Windows libmpv
+        if: matrix.platform == 'windows-latest'
+        run: python scripts/setup_mpv_windows.py
+
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
@@ -56,8 +64,18 @@ jobs:
         working-directory: apps/desktop
         run: npm test
 
+      - name: Build frontend assets
+        working-directory: apps/desktop
+        run: npm run build
+
       - name: Run workspace cargo tests
         run: cargo test --workspace
+
+      - name: Verify real decoder tracks and subtitles
+        shell: bash
+        run: |
+          python scripts/create_player_fixture.py
+          WT_TEST_MEDIA="$(python -c 'from pathlib import Path; print(Path("target/player-fixtures/multi.mkv").resolve())')" cargo test -p media-engine --test real_mpv_test -- --ignored
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0.0" --locked
@@ -65,6 +83,13 @@ jobs:
       - name: Build Tauri Desktop Application
         working-directory: apps/desktop
         run: cargo tauri build ${{ matrix.args }}
+
+      - name: Bundle macOS media libraries and create DMG
+        if: matrix.platform == 'macos-latest'
+        run: |
+          python3 scripts/bundle_mpv_macos.py "target/release/bundle/macos/Watch Together.app"
+          mkdir -p target/release/bundle/dmg
+          hdiutil create -volname "Watch Together" -srcfolder "target/release/bundle/macos/Watch Together.app" -ov -format UDZO "target/release/bundle/dmg/Watch_Together_macOS.dmg"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

@@ -72,6 +72,8 @@ pub type FnMpvFree = unsafe extern "C" fn(*mut c_void);
 pub type FnMpvObserveProperty =
     unsafe extern "C" fn(*mut mpv_handle, u64, *const c_char, mpv_format) -> c_int;
 pub type FnMpvWaitEvent = unsafe extern "C" fn(*mut mpv_handle, c_double) -> *mut mpv_event;
+pub type FnMpvWakeup = unsafe extern "C" fn(*mut mpv_handle);
+
 pub type FnMpvErrorString = unsafe extern "C" fn(c_int) -> *const c_char;
 
 /// Dynamic function table holding loaded `libmpv` symbols.
@@ -92,6 +94,7 @@ pub struct MpvApi {
     pub mpv_observe_property: FnMpvObserveProperty,
     pub mpv_wait_event: FnMpvWaitEvent,
     pub mpv_error_string: FnMpvErrorString,
+    pub mpv_wakeup: FnMpvWakeup,
 }
 
 // Safety: libmpv symbols are safe to share across threads.
@@ -111,8 +114,18 @@ impl MpvApi {
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
                 // macOS bundle Frameworks: Contents/MacOS/../Frameworks/
-                candidate_paths.push(exe_dir.join("../Frameworks/libmpv.2.dylib").to_string_lossy().into_owned());
-                candidate_paths.push(exe_dir.join("../Frameworks/libmpv.dylib").to_string_lossy().into_owned());
+                candidate_paths.push(
+                    exe_dir
+                        .join("../Frameworks/libmpv.2.dylib")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+                candidate_paths.push(
+                    exe_dir
+                        .join("../Frameworks/libmpv.dylib")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
                 // Windows next to exe
                 candidate_paths.push(exe_dir.join("mpv-2.dll").to_string_lossy().into_owned());
                 candidate_paths.push(exe_dir.join("libmpv-2.dll").to_string_lossy().into_owned());
@@ -148,17 +161,27 @@ impl MpvApi {
                     }
                 },
                 Err(e) => {
-                    last_error = Some(MediaEngineError::LibMpvNotFound(format!(
-                        "{}: {}",
-                        path, e
-                    )));
+                    last_error = Some(MediaEngineError::LibMpvNotFound(format!("{}: {}", path, e)));
                 }
             }
         }
 
         Err(last_error.unwrap_or_else(|| {
-            MediaEngineError::LibMpvNotFound("No dynamic library candidate paths succeeded".to_string())
+            MediaEngineError::LibMpvNotFound(
+                "No dynamic library candidate paths succeeded".to_string(),
+            )
         }))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) unsafe fn render_symbol(
+        &self,
+        name: &[u8],
+    ) -> Result<*const c_void, MediaEngineError> {
+        self._lib
+            .get::<*const c_void>(name)
+            .map(|s| *s)
+            .map_err(|e| MediaEngineError::LibMpvInitFailed(e.to_string()))
     }
 
     unsafe fn from_library(lib: Library) -> Result<Self, MediaEngineError> {
@@ -178,9 +201,9 @@ impl MpvApi {
             let mpv_command: Symbol<FnMpvCommand> = lib
                 .get(b"mpv_command\0")
                 .map_err(|e| MediaEngineError::LibMpvInitFailed(e.to_string()))?;
-            let mpv_command_string: Symbol<FnMpvCommandString> = lib
-                .get(b"mpv_command_string\0")
-                .map_err(|e| MediaEngineError::LibMpvInitFailed(e.to_string()))?;
+            let mpv_command_string: Symbol<FnMpvCommandString> =
+                lib.get(b"mpv_command_string\0")
+                    .map_err(|e| MediaEngineError::LibMpvInitFailed(e.to_string()))?;
             let mpv_set_option_string: Symbol<FnMpvSetOptionString> = lib
                 .get(b"mpv_set_option_string\0")
                 .map_err(|e| MediaEngineError::LibMpvInitFailed(e.to_string()))?;
@@ -205,11 +228,15 @@ impl MpvApi {
             let mpv_wait_event: Symbol<FnMpvWaitEvent> = lib
                 .get(b"mpv_wait_event\0")
                 .map_err(|e| MediaEngineError::LibMpvInitFailed(e.to_string()))?;
+            let mpv_wakeup: Symbol<FnMpvWakeup> = lib
+                .get(b"mpv_wakeup\0")
+                .map_err(|e| MediaEngineError::LibMpvInitFailed(e.to_string()))?;
             let mpv_error_string: Symbol<FnMpvErrorString> = lib
                 .get(b"mpv_error_string\0")
                 .map_err(|e| MediaEngineError::LibMpvInitFailed(e.to_string()))?;
 
             Ok(Self {
+                mpv_wakeup: *mpv_wakeup,
                 mpv_create: *mpv_create,
                 mpv_initialize: *mpv_initialize,
                 mpv_destroy: *mpv_destroy,

@@ -160,22 +160,15 @@ export const windowApi = {
     }
   },
 
-  openFileDialog: async (): Promise<string | null> => {
+  openFileDialog: async (kind: 'video' | 'subtitle' = 'video'): Promise<string | null> => {
     if (hasTauri()) {
       try {
         const { open } = await import('@tauri-apps/plugin-dialog');
         const selected = await open({
           multiple: false,
-          filters: [
-            {
-              name: 'Video Files',
-              extensions: ['mp4', 'mov', 'mkv'],
-            },
-            {
-              name: 'Subtitles',
-              extensions: ['srt', 'ass'],
-            },
-          ],
+          filters: kind === 'subtitle'
+            ? [{ name: 'Subtitles', extensions: ['srt', 'ass'] }]
+            : [{ name: 'Video Files', extensions: ['mp4', 'mov', 'mkv'] }],
         });
         if (typeof selected === 'string') return selected;
         return null;

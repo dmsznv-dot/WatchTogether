@@ -3,6 +3,41 @@ import { renderHook } from '@testing-library/react';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 describe('useKeyboardShortcuts Hook', () => {
+  it('uses physical keys in the Russian layout', () => {
+    const onToggleFullscreen = vi.fn();
+    const onToggleMute = vi.fn();
+    const onOpenFile = vi.fn();
+    renderHook(() => useKeyboardShortcuts({ onToggleFullscreen, onToggleMute, onOpenFile }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'а', code: 'KeyF' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ь', code: 'KeyM' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'щ', code: 'KeyO', ctrlKey: true }));
+    expect(onToggleFullscreen).toHaveBeenCalledOnce();
+    expect(onToggleMute).toHaveBeenCalledOnce();
+    expect(onOpenFile).toHaveBeenCalledOnce();
+  });
+
+  it('does not hijack modified shortcuts or repeat toggle actions', () => {
+    const onToggleFullscreen = vi.fn();
+    const onTogglePlayPause = vi.fn();
+    renderHook(() => useKeyboardShortcuts({ onToggleFullscreen, onTogglePlayPause }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', repeat: true }));
+    expect(onToggleFullscreen).not.toHaveBeenCalled();
+    expect(onTogglePlayPause).not.toHaveBeenCalled();
+  });
+
+  it('leaves nested editable content alone', () => {
+    const onToggleMute = vi.fn();
+    renderHook(() => useKeyboardShortcuts({ onToggleMute }));
+    const editor = document.createElement('div');
+    editor.setAttribute('contenteditable', '');
+    const child = document.createElement('span');
+    editor.appendChild(child);
+    document.body.appendChild(editor);
+    child.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
+    expect(onToggleMute).not.toHaveBeenCalled();
+    editor.remove();
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
   });

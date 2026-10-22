@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { VideoCanvas } from './features/player/VideoCanvas';
 import { HeaderHUD } from './features/player/HeaderHUD';
 import { ControlsHUD } from './features/player/ControlsHUD';
@@ -14,9 +14,14 @@ import {
   useAutoHide,
   useKeyboardShortcuts,
 } from './hooks';
-import { windowApi } from './services/ipc';
+import { hasTauri, windowApi } from './services/ipc';
 
 export function App() {
+  const native = hasTauri();
+  useEffect(() => {
+    document.documentElement.toggleAttribute('data-native', native);
+    return () => { document.documentElement.removeAttribute('data-native'); };
+  }, [native]);
   const settings = useSettings();
 
   const player = usePlayer({
@@ -31,6 +36,24 @@ export function App() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState<boolean>(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!native) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    import('@tauri-apps/api/webviewWindow').then(async ({ getCurrentWebviewWindow }) => {
+      const window = getCurrentWebviewWindow();
+      const sync = async () => {
+        const fullscreen = await window.isFullscreen();
+        if (!disposed) setIsFullscreen(fullscreen);
+      };
+      const stop = await window.onResized(() => { void sync().catch(console.error); });
+      if (disposed) { stop(); return; }
+      unlisten = stop;
+      await sync();
+    }).catch(console.error);
+    return () => { disposed = true; unlisten?.(); };
+  }, [native]);
 
   const isModalOpen =
     isCreateModalOpen || isJoinModalOpen || isSettingsModalOpen;
@@ -94,7 +117,7 @@ export function App() {
   });
 
   return (
-    <div className="relative w-screen h-screen bg-[#0B0D11] text-zinc-100 overflow-hidden font-sans select-none">
+    <div className={`relative w-screen h-screen ${native ? "bg-transparent" : "bg-[#0B0D11]"} text-zinc-100 overflow-hidden font-sans select-none`}>
       {/* Central Video Viewport (Canvas / Surface) */}
       <VideoCanvas
         currentFile={player.currentFile}

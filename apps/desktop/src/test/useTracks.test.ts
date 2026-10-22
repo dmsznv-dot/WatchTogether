@@ -66,5 +66,6 @@ describe('useTracks Hook', () => {
     expect(track).toBeDefined();
     expect(track.is_external).toBe(true);
     expect(track.is_selected).toBe(true);
+    expect(result.current.subtitleTracks.filter((t) => t.id === track.id)).toHaveLength(1);
   });
 });

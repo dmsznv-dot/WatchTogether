@@ -1,0 +1,6 @@
+{
+  "bundle": {
+    "targets": ["msi", "nsis"],
+    "resources": { "mpv-2.dll": "mpv-2.dll" }
+  }
+}

@@ -1,4 +1,6 @@
 pub mod ffi;
+#[cfg(target_os = "macos")]
+mod macos;
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_double, c_int, c_void};
@@ -21,6 +23,67 @@ struct MpvHandleWrapper(*mut mpv_handle);
 unsafe impl Send for MpvHandleWrapper {}
 unsafe impl Sync for MpvHandleWrapper {}
 
+// All access uses libmpv's thread-safe client API; returned strings are owned here.
+fn read_tracks(api: &MpvApi, handle: *mut mpv_handle) -> Vec<MediaTrack> {
+    let string = |name: &str| -> Option<String> {
+        let name = CString::new(name).ok()?;
+        let ptr = unsafe { (api.mpv_get_property_string)(handle, name.as_ptr()) };
+        if ptr.is_null() {
+            return None;
+        }
+        let value = unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { (api.mpv_free)(ptr.cast()) };
+        Some(value)
+    };
+    let integer = |name: &str| -> Option<i64> {
+        let name = CString::new(name).ok()?;
+        let mut value: i64 = 0;
+        let code = unsafe {
+            (api.mpv_get_property)(
+                handle,
+                name.as_ptr(),
+                MPV_FORMAT_INT64,
+                (&mut value as *mut i64).cast(),
+            )
+        };
+        (code >= 0).then_some(value)
+    };
+    let flag = |name: &str| -> bool {
+        let name = CString::new(name).unwrap();
+        let mut value: c_int = 0;
+        let code = unsafe {
+            (api.mpv_get_property)(
+                handle,
+                name.as_ptr(),
+                MPV_FORMAT_FLAG,
+                (&mut value as *mut c_int).cast(),
+            )
+        };
+        code >= 0 && value != 0
+    };
+    (0..integer("track-list/count").unwrap_or(0))
+        .filter_map(|i| {
+            let prefix = format!("track-list/{i}");
+            let track_type = match string(&format!("{prefix}/type"))?.as_str() {
+                "audio" => TrackType::Audio,
+                "sub" => TrackType::Subtitle,
+                _ => return None,
+            };
+            Some(MediaTrack {
+                id: integer(&format!("{prefix}/id"))?,
+                track_type,
+                title: string(&format!("{prefix}/title")),
+                lang: string(&format!("{prefix}/lang")),
+                is_selected: flag(&format!("{prefix}/selected")),
+                is_external: flag(&format!("{prefix}/external")),
+                codec: string(&format!("{prefix}/codec")),
+            })
+        })
+        .collect()
+}
+
 /// Real hardware-accelerated media player integrating `libmpv`.
 pub struct MpvPlayer {
     api: Arc<MpvApi>,
@@ -34,6 +97,11 @@ pub struct MpvPlayer {
 impl MpvPlayer {
     /// Attempts to load `libmpv` dynamically and initialize player context.
     pub fn new() -> Result<Self, MediaEngineError> {
+        Self::new_with_options(&[])
+    }
+
+    /// Options applied before initialization, including embedded output selection.
+    pub fn new_with_options(options: &[(&str, &str)]) -> Result<Self, MediaEngineError> {
         let api = MpvApi::load()?;
         let handle = unsafe { (api.mpv_create)() };
         if handle.is_null() {
@@ -44,11 +112,19 @@ impl MpvPlayer {
 
         // Apply configuration options before mpv_initialize
         let set_opt = |name: &str, value: &str| -> Result<(), MediaEngineError> {
-            let c_name = CString::new(name).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
-            let c_val = CString::new(value).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
-            let res = unsafe { (api.mpv_set_option_string)(handle, c_name.as_ptr(), c_val.as_ptr()) };
+            let c_name =
+                CString::new(name).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
+            let c_val =
+                CString::new(value).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
+            let res =
+                unsafe { (api.mpv_set_option_string)(handle, c_name.as_ptr(), c_val.as_ptr()) };
             if res < 0 {
-                tracing::warn!("libmpv: failed to set option '{}={}' (code {})", name, value, res);
+                unsafe {
+                    (api.mpv_destroy)(handle);
+                }
+                return Err(MediaEngineError::LibMpvInitFailed(format!(
+                    "Cannot set {name}={value}: {res}"
+                )));
             }
             Ok(())
         };
@@ -61,13 +137,17 @@ impl MpvPlayer {
         set_opt("keep-open", "yes")?;
         set_opt("terminal", "no")?;
         set_opt("msg-level", "all=warn")?;
-        set_opt("input-default-bindings", "yes")?;
-        set_opt("input-vo-keyboard", "yes")?;
+        set_opt("input-default-bindings", "no")?;
+        set_opt("input-vo-keyboard", "no")?;
         set_opt("osd-level", "1")?;
         set_opt("osd-bar", "yes")?;
         set_opt("osd-font-size", "28")?;
         set_opt("autofit-larger", "1280x720")?;
         set_opt("title", "Watch Together")?;
+
+        for (name, value) in options {
+            set_opt(name, value)?;
+        }
 
         let init_res = unsafe { (api.mpv_initialize)(handle) };
         if init_res < 0 {
@@ -77,25 +157,6 @@ impl MpvPlayer {
                 init_res
             )));
         }
-
-        // Setup custom input key bindings
-        let bind_key = |key: &str, action: &str| {
-            if let (Ok(c_cmd), Ok(c_key), Ok(c_act)) = (
-                CString::new("key-binding"),
-                CString::new(key),
-                CString::new(action),
-            ) {
-                let mut args: [*const c_char; 4] = [
-                    c_cmd.as_ptr(),
-                    c_key.as_ptr(),
-                    c_act.as_ptr(),
-                    std::ptr::null(),
-                ];
-                unsafe { (api.mpv_command)(handle, args.as_mut_ptr()) };
-            }
-        };
-        bind_key("UP", "add volume 5");
-        bind_key("DOWN", "add volume -5");
 
         // Setup property observation
         let observe = |id: u64, name: &str, format: mpv_format| {
@@ -112,6 +173,9 @@ impl MpvPlayer {
         observe(6, "duration", MPV_FORMAT_DOUBLE);
         observe(7, "width", MPV_FORMAT_INT64);
         observe(8, "height", MPV_FORMAT_INT64);
+        observe(9, "track-list", MPV_FORMAT_NONE);
+        observe(10, "aid", MPV_FORMAT_NONE);
+        observe(11, "sid", MPV_FORMAT_NONE);
 
         let (event_tx, _) = broadcast::channel(256);
         let event_tx_clone = event_tx.clone();
@@ -124,38 +188,59 @@ impl MpvPlayer {
         let observer_thread = std::thread::spawn(move || {
             let h = raw_handle as *mut mpv_handle;
 
-            let query_and_emit_state = |target_h: *mut mpv_handle, tx: &broadcast::Sender<PlayerEvent>| {
-                let mut paused: c_int = 0;
-                let c_pause = CString::new("pause").unwrap();
-                let _ = unsafe {
-                    (api_clone.mpv_get_property)(target_h, c_pause.as_ptr(), MPV_FORMAT_FLAG, &mut paused as *mut _ as *mut c_void)
-                };
+            let query_and_emit_state =
+                |target_h: *mut mpv_handle, tx: &broadcast::Sender<PlayerEvent>| {
+                    let mut paused: c_int = 0;
+                    let c_pause = CString::new("pause").unwrap();
+                    let _ = unsafe {
+                        (api_clone.mpv_get_property)(
+                            target_h,
+                            c_pause.as_ptr(),
+                            MPV_FORMAT_FLAG,
+                            &mut paused as *mut _ as *mut c_void,
+                        )
+                    };
 
-                let mut spd: c_double = 1.0;
-                let c_spd = CString::new("speed").unwrap();
-                let _ = unsafe {
-                    (api_clone.mpv_get_property)(target_h, c_spd.as_ptr(), MPV_FORMAT_DOUBLE, &mut spd as *mut _ as *mut c_void)
-                };
+                    let mut spd: c_double = 1.0;
+                    let c_spd = CString::new("speed").unwrap();
+                    let _ = unsafe {
+                        (api_clone.mpv_get_property)(
+                            target_h,
+                            c_spd.as_ptr(),
+                            MPV_FORMAT_DOUBLE,
+                            &mut spd as *mut _ as *mut c_void,
+                        )
+                    };
 
-                let mut vol: c_double = 100.0;
-                let c_vol = CString::new("volume").unwrap();
-                let _ = unsafe {
-                    (api_clone.mpv_get_property)(target_h, c_vol.as_ptr(), MPV_FORMAT_DOUBLE, &mut vol as *mut _ as *mut c_void)
-                };
+                    let mut vol: c_double = 100.0;
+                    let c_vol = CString::new("volume").unwrap();
+                    let _ = unsafe {
+                        (api_clone.mpv_get_property)(
+                            target_h,
+                            c_vol.as_ptr(),
+                            MPV_FORMAT_DOUBLE,
+                            &mut vol as *mut _ as *mut c_void,
+                        )
+                    };
 
-                let mut muted: c_int = 0;
-                let c_mute = CString::new("mute").unwrap();
-                let _ = unsafe {
-                    (api_clone.mpv_get_property)(target_h, c_mute.as_ptr(), MPV_FORMAT_FLAG, &mut muted as *mut _ as *mut c_void)
-                };
+                    let mut muted: c_int = 0;
+                    let c_mute = CString::new("mute").unwrap();
+                    let _ = unsafe {
+                        (api_clone.mpv_get_property)(
+                            target_h,
+                            c_mute.as_ptr(),
+                            MPV_FORMAT_FLAG,
+                            &mut muted as *mut _ as *mut c_void,
+                        )
+                    };
 
-                let _ = tx.send(PlayerEvent::StateChange {
-                    is_playing: paused == 0,
-                    speed: spd as f32,
-                    volume: (vol / 100.0).clamp(0.0, 1.0),
-                    is_muted: muted != 0,
-                });
-            };
+                    let _ = tx.send(PlayerEvent::StateChange {
+                        is_playing: paused == 0,
+                        speed: spd as f32,
+                        volume: (vol / 100.0).clamp(0.0, 1.0),
+                        is_muted: muted != 0,
+                    });
+                };
 
             while !is_terminating_clone.load(Ordering::SeqCst) {
                 let event_ptr = unsafe { (api_clone.mpv_wait_event)(h, -1.0) };
@@ -167,6 +252,12 @@ impl MpvPlayer {
                     MPV_EVENT_SHUTDOWN => {
                         break;
                     }
+                    MPV_EVENT_FILE_LOADED => {
+                        let _ = event_tx_clone.send(PlayerEvent::TracksChange {
+                            tracks: read_tracks(&api_clone, h),
+                        });
+                        query_and_emit_state(h, &event_tx_clone);
+                    }
                     MPV_EVENT_END_FILE => {
                         let _ = event_tx_clone.send(PlayerEvent::Eof);
                     }
@@ -175,7 +266,14 @@ impl MpvPlayer {
                         if !prop.name.is_null() {
                             let name = unsafe { CStr::from_ptr(prop.name) }.to_string_lossy();
                             match name.as_ref() {
-                                "time-pos" if prop.format == MPV_FORMAT_DOUBLE => {
+                                "track-list" | "aid" | "sid" => {
+                                    let _ = event_tx_clone.send(PlayerEvent::TracksChange {
+                                        tracks: read_tracks(&api_clone, h),
+                                    });
+                                }
+                                "time-pos"
+                                    if prop.format == MPV_FORMAT_DOUBLE && !prop.data.is_null() =>
+                                {
                                     let sec = unsafe { *(prop.data as *const c_double) };
                                     let pos_ms = (sec * 1000.0).max(0.0) as u64;
                                     // fetch duration
@@ -226,7 +324,8 @@ impl MpvPlayer {
                                     };
                                     if res_w >= 0 && res_h >= 0 && w > 0 && h_val > 0 {
                                         let dims = VideoDimensions::new(w as u32, h_val as u32);
-                                        let _ = event_tx_clone.send(PlayerEvent::DimensionsChange(dims));
+                                        let _ = event_tx_clone
+                                            .send(PlayerEvent::DimensionsChange(dims));
                                     }
                                 }
                                 _ => {}
@@ -272,11 +371,15 @@ impl MpvPlayer {
 impl MediaPlayer for MpvPlayer {
     fn open_file(&self, path_or_url: &str) -> Result<(), MediaEngineError> {
         *self.current_file.lock().unwrap() = Some(path_or_url.to_string());
-        let cmd = CString::new("loadfile").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
-        let arg1 = CString::new(path_or_url).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
-        let arg2 = CString::new("replace").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
+        let cmd =
+            CString::new("loadfile").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
+        let arg1 =
+            CString::new(path_or_url).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
+        let arg2 =
+            CString::new("replace").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
 
-        let mut args: [*const c_char; 4] = [cmd.as_ptr(), arg1.as_ptr(), arg2.as_ptr(), std::ptr::null()];
+        let mut args: [*const c_char; 4] =
+            [cmd.as_ptr(), arg1.as_ptr(), arg2.as_ptr(), std::ptr::null()];
         let res = unsafe { (self.api.mpv_command)(self.handle.0, args.as_mut_ptr()) };
         self.check_error(res, &format!("loadfile {}", path_or_url))
     }
@@ -317,7 +420,8 @@ impl MediaPlayer for MpvPlayer {
         let mode = if exact { "absolute+exact" } else { "absolute" };
         let arg2 = CString::new(mode).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
 
-        let mut args: [*const c_char; 4] = [cmd.as_ptr(), arg1.as_ptr(), arg2.as_ptr(), std::ptr::null()];
+        let mut args: [*const c_char; 4] =
+            [cmd.as_ptr(), arg1.as_ptr(), arg2.as_ptr(), std::ptr::null()];
         let res = unsafe { (self.api.mpv_command)(self.handle.0, args.as_mut_ptr()) };
         self.check_error(res, &format!("seek {}", target_sec))
     }
@@ -371,93 +475,10 @@ impl MediaPlayer for MpvPlayer {
     }
 
     fn audio_tracks(&self) -> Result<Vec<MediaTrack>, MediaEngineError> {
-        // Query current track list from mpv
-        let prop = CString::new("track-list/count").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
-        let mut count: i64 = 0;
-        let res = unsafe {
-            (self.api.mpv_get_property)(
-                self.handle.0,
-                prop.as_ptr(),
-                MPV_FORMAT_INT64,
-                &mut count as *mut _ as *mut c_void,
-            )
-        };
-
-        if res < 0 || count <= 0 {
-            return Ok(Vec::new());
-        }
-
-        let mut tracks = Vec::new();
-        for i in 0..count {
-            let type_prop = CString::new(format!("track-list/{}/type", i)).unwrap();
-            let ptr = unsafe { (self.api.mpv_get_property_string)(self.handle.0, type_prop.as_ptr()) };
-            if ptr.is_null() {
-                continue;
-            }
-            let track_type_str = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
-            let is_audio = track_type_str == "audio";
-            unsafe { (self.api.mpv_free)(ptr as *mut c_void) };
-
-            if is_audio {
-                let id_prop = CString::new(format!("track-list/{}/id", i)).unwrap();
-                let mut id: i64 = i + 1;
-                unsafe {
-                    (self.api.mpv_get_property)(
-                        self.handle.0,
-                        id_prop.as_ptr(),
-                        MPV_FORMAT_INT64,
-                        &mut id as *mut _ as *mut c_void,
-                    )
-                };
-
-                let sel_prop = CString::new(format!("track-list/{}/selected", i)).unwrap();
-                let mut selected: c_int = 0;
-                unsafe {
-                    (self.api.mpv_get_property)(
-                        self.handle.0,
-                        sel_prop.as_ptr(),
-                        MPV_FORMAT_FLAG,
-                        &mut selected as *mut _ as *mut c_void,
-                    )
-                };
-
-                let title_prop = CString::new(format!("track-list/{}/title", i)).unwrap();
-                let title_ptr = unsafe {
-                    (self.api.mpv_get_property_string)(self.handle.0, title_prop.as_ptr())
-                };
-                let title = if !title_ptr.is_null() {
-                    let s = unsafe { CStr::from_ptr(title_ptr) }.to_string_lossy().into_owned();
-                    unsafe { (self.api.mpv_free)(title_ptr as *mut c_void) };
-                    Some(s)
-                } else {
-                    None
-                };
-
-                let lang_prop = CString::new(format!("track-list/{}/lang", i)).unwrap();
-                let lang_ptr = unsafe {
-                    (self.api.mpv_get_property_string)(self.handle.0, lang_prop.as_ptr())
-                };
-                let lang = if !lang_ptr.is_null() {
-                    let s = unsafe { CStr::from_ptr(lang_ptr) }.to_string_lossy().into_owned();
-                    unsafe { (self.api.mpv_free)(lang_ptr as *mut c_void) };
-                    Some(s)
-                } else {
-                    None
-                };
-
-                tracks.push(MediaTrack {
-                    id,
-                    track_type: TrackType::Audio,
-                    title,
-                    lang,
-                    is_selected: selected != 0,
-                    is_external: false,
-                    codec: None,
-                });
-            }
-        }
-
-        Ok(tracks)
+        Ok(read_tracks(&self.api, self.handle.0)
+            .into_iter()
+            .filter(|t| t.track_type == TrackType::Audio)
+            .collect())
     }
 
     fn select_audio(&self, track_id: i64) -> Result<(), MediaEngineError> {
@@ -475,103 +496,10 @@ impl MediaPlayer for MpvPlayer {
     }
 
     fn subtitle_tracks(&self) -> Result<Vec<MediaTrack>, MediaEngineError> {
-        let prop = CString::new("track-list/count").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
-        let mut count: i64 = 0;
-        let res = unsafe {
-            (self.api.mpv_get_property)(
-                self.handle.0,
-                prop.as_ptr(),
-                MPV_FORMAT_INT64,
-                &mut count as *mut _ as *mut c_void,
-            )
-        };
-
-        if res < 0 || count <= 0 {
-            return Ok(Vec::new());
-        }
-
-        let mut tracks = Vec::new();
-        for i in 0..count {
-            let type_prop = CString::new(format!("track-list/{}/type", i)).unwrap();
-            let ptr = unsafe { (self.api.mpv_get_property_string)(self.handle.0, type_prop.as_ptr()) };
-            if ptr.is_null() {
-                continue;
-            }
-            let track_type_str = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
-            let is_sub = track_type_str == "sub";
-            unsafe { (self.api.mpv_free)(ptr as *mut c_void) };
-
-            if is_sub {
-                let id_prop = CString::new(format!("track-list/{}/id", i)).unwrap();
-                let mut id: i64 = i + 1;
-                unsafe {
-                    (self.api.mpv_get_property)(
-                        self.handle.0,
-                        id_prop.as_ptr(),
-                        MPV_FORMAT_INT64,
-                        &mut id as *mut _ as *mut c_void,
-                    )
-                };
-
-                let sel_prop = CString::new(format!("track-list/{}/selected", i)).unwrap();
-                let mut selected: c_int = 0;
-                unsafe {
-                    (self.api.mpv_get_property)(
-                        self.handle.0,
-                        sel_prop.as_ptr(),
-                        MPV_FORMAT_FLAG,
-                        &mut selected as *mut _ as *mut c_void,
-                    )
-                };
-
-                let ext_prop = CString::new(format!("track-list/{}/external", i)).unwrap();
-                let mut is_ext: c_int = 0;
-                unsafe {
-                    (self.api.mpv_get_property)(
-                        self.handle.0,
-                        ext_prop.as_ptr(),
-                        MPV_FORMAT_FLAG,
-                        &mut is_ext as *mut _ as *mut c_void,
-                    )
-                };
-
-                let title_prop = CString::new(format!("track-list/{}/title", i)).unwrap();
-                let title_ptr = unsafe {
-                    (self.api.mpv_get_property_string)(self.handle.0, title_prop.as_ptr())
-                };
-                let title = if !title_ptr.is_null() {
-                    let s = unsafe { CStr::from_ptr(title_ptr) }.to_string_lossy().into_owned();
-                    unsafe { (self.api.mpv_free)(title_ptr as *mut c_void) };
-                    Some(s)
-                } else {
-                    None
-                };
-
-                let lang_prop = CString::new(format!("track-list/{}/lang", i)).unwrap();
-                let lang_ptr = unsafe {
-                    (self.api.mpv_get_property_string)(self.handle.0, lang_prop.as_ptr())
-                };
-                let lang = if !lang_ptr.is_null() {
-                    let s = unsafe { CStr::from_ptr(lang_ptr) }.to_string_lossy().into_owned();
-                    unsafe { (self.api.mpv_free)(lang_ptr as *mut c_void) };
-                    Some(s)
-                } else {
-                    None
-                };
-
-                tracks.push(MediaTrack {
-                    id,
-                    track_type: TrackType::Subtitle,
-                    title,
-                    lang,
-                    is_selected: selected != 0,
-                    is_external: is_ext != 0,
-                    codec: None,
-                });
-            }
-        }
-
-        Ok(tracks)
+        Ok(read_tracks(&self.api, self.handle.0)
+            .into_iter()
+            .filter(|t| t.track_type == TrackType::Subtitle)
+            .collect())
     }
 
     fn select_subtitle(&self, track_id: i64) -> Result<(), MediaEngineError> {
@@ -615,16 +543,17 @@ impl MediaPlayer for MpvPlayer {
 
         let cmd = CString::new("sub-add").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
         let arg_path = CString::new(path).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
-        let arg_flags = CString::new("select").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
-        let arg_title = title.and_then(|t| CString::new(t).ok());
+        let arg_flags =
+            CString::new("select").map_err(|e| MediaEngineError::Internal(e.to_string()))?;
+        let arg_title = CString::new(title.unwrap_or(""))
+            .map_err(|e| MediaEngineError::Internal(e.to_string()))?;
         let arg_lang = lang.and_then(|l| CString::new(l).ok());
 
-        let mut args: Vec<*const c_char> = vec![cmd.as_ptr(), arg_path.as_ptr(), arg_flags.as_ptr()];
-        if let Some(ref t) = arg_title {
-            args.push(t.as_ptr());
-            if let Some(ref l) = arg_lang {
-                args.push(l.as_ptr());
-            }
+        let mut args: Vec<*const c_char> =
+            vec![cmd.as_ptr(), arg_path.as_ptr(), arg_flags.as_ptr()];
+        args.push(arg_title.as_ptr());
+        if let Some(ref l) = arg_lang {
+            args.push(l.as_ptr());
         }
         args.push(std::ptr::null());
 
@@ -647,9 +576,12 @@ impl MediaPlayer for MpvPlayer {
 
     fn get_state(&self) -> Result<PlayerState, MediaEngineError> {
         let c_path = CString::new("path").unwrap();
-        let path_ptr = unsafe { (self.api.mpv_get_property_string)(self.handle.0, c_path.as_ptr()) };
+        let path_ptr =
+            unsafe { (self.api.mpv_get_property_string)(self.handle.0, c_path.as_ptr()) };
         let current_file = if !path_ptr.is_null() {
-            let s = unsafe { CStr::from_ptr(path_ptr) }.to_string_lossy().into_owned();
+            let s = unsafe { CStr::from_ptr(path_ptr) }
+                .to_string_lossy()
+                .into_owned();
             unsafe { (self.api.mpv_free)(path_ptr as *mut c_void) };
             Some(s)
         } else {
@@ -815,6 +747,13 @@ impl MediaPlayer for MpvPlayer {
 impl Drop for MpvPlayer {
     fn drop(&mut self) {
         self.is_terminating.store(true, Ordering::SeqCst);
+        // The observer must leave mpv_wait_event before its handle is freed.
+        unsafe {
+            (self.api.mpv_wakeup)(self.handle.0);
+        }
+        if let Some(thread) = self._observer_thread.take() {
+            let _ = thread.join();
+        }
         unsafe {
             (self.api.mpv_terminate_destroy)(self.handle.0);
         }

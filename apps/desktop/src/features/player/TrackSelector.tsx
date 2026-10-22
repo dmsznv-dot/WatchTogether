@@ -37,7 +37,7 @@ export function TrackSelector({
   }, [activeMenu]);
 
   const handleOpenExternalSubtitle = async () => {
-    const selected = await windowApi.openFileDialog();
+    const selected = await windowApi.openFileDialog('subtitle');
     if (selected) {
       onLoadExternalSubtitle(selected);
       setActiveMenu(null);
