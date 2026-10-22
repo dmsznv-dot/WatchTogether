@@ -9,17 +9,23 @@
 - Исправлены обновление списка аудиодорожек, встроенные ASS и загрузка внешних SRT.
 - Добавлена новая бело-серебристая иконка с чёрным Play.
 
+### Скачать приложение для Windows
+
+**[Скачать установщик EXE (Windows x64)](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/WatchTogether-Windows-x64-Setup.exe)** · **[Скачать ZIP](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/WatchTogether-Windows-x64.zip)**
+
+Windows CI проходит тесты, сборку установщика, тихую установку и загрузку установленной libmpv. EXE включает медиабиблиотеку.
+
 ### Скачать приложение для Mac
 
-**[Скачать ZIP с новой иконкой](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-b180e20/WatchTogether-macOS.zip)** · **[Скачать DMG напрямую](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-b180e20/Watch_Together_macOS.dmg)**
+**[Скачать ZIP с новой иконкой](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/WatchTogether-macOS.zip)** · **[Скачать DMG напрямую](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/Watch_Together_macOS.dmg)**
 
-[Описание релиза](https://github.com/dmsznv-dot/WatchTogether/releases/tag/preview-b180e20). В ZIP из Releases установщик `Watch_Together_macOS.dmg` лежит прямо в корне архива.
+[Описание релиза](https://github.com/dmsznv-dot/WatchTogether/releases/tag/preview-3121b2a). В ZIP из Releases установщик `Watch_Together_macOS.dmg` лежит прямо в корне архива.
 
 **Code → Download ZIP скачивает только исходники. В этом ZIP приложения и DMG нет.**
 
 В ZIP из Actions с названием `watch-together-macos-latest.zip` установщик лежит по пути `dmg/Watch_Together_macOS.dmg`.
 
-Это тестовое обновление: вывод видео и управление требуют проверки на реальных macOS/Windows. Windows-инсталлятор пока не публикуется: Windows CI не проходит тесты.
+Это тестовое обновление: вывод видео и управление требуют проверки на реальных macOS/Windows. Windows-инсталлятор опубликован в Releases; проверка интерактивного воспроизведения на реальном Windows остаётся необходимой.
 
 ---
 
@@ -67,7 +73,7 @@
 
 ### 🪟 Windows (10 / 11)
 
-1. Download the **`.msi`** or **`.exe`** installer from [GitHub Actions Artifacts](https://github.com/dmsznv-dot/WatchTogether/actions).
+1. Download the **[Windows x64 EXE installer](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/WatchTogether-Windows-x64-Setup.exe)** from Releases.
 2. Run the installer and launch **Watch Together** from your Start menu.  
    *(Embedded hardware-accelerated video decoding is included out of the box).*
 
