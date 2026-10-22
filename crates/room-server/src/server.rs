@@ -150,8 +150,16 @@ impl RoomServer {
                     move |ws: WebSocketUpgrade, State(manager): State<Arc<RoomManager>>| {
                         let sockets_closed = sockets_closed.clone();
                         async move {
-                            ws.max_message_size(64 * 1024).on_upgrade(move |socket| {
-                                handle_socket(socket, manager, allow_create, sockets_closed)
+                            ws.max_message_size(64 * 1024).on_upgrade(move |socket| async move {
+                                let mut cancel = sockets_closed.clone();
+                                if *cancel.borrow() { return; }
+                                // Cancellation surrounds the whole handler, including sends to
+                                // a slow/non-reading peer. Dropping it closes the TCP socket.
+                                tokio::select! {
+                                    biased;
+                                    _ = cancel.changed() => {},
+                                    _ = handle_socket(socket, manager, allow_create, sockets_closed) => {},
+                                }
                             })
                         }
                     },
