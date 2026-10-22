@@ -1,0 +1,90 @@
+name: Publish macOS Release
+
+on:
+  workflow_run:
+    workflows: ["Build & Release"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Completed Build & Release run containing the macOS artifact"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: publish-macos-${{ github.event.workflow_run.head_sha || inputs.run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify completed macOS build and download installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > /tmp/source-run.json
+          python3 - <<'PY'
+          import json, os
+          r = json.load(open("/tmp/source-run.json"))
+          assert r["head_branch"] == "main" and r["status"] == "completed"
+          assert r["head_repository"]["full_name"] == os.environ["GITHUB_REPOSITORY"]
+          assert r["name"] == "Build & Release"
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write("SOURCE_SHA=" + r["head_sha"] + "\n")
+              f.write("SOURCE_RUN_URL=" + r["html_url"] + "\n")
+          PY
+          status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[] | select(.name | startswith("test-and-build (macos-latest")) | .conclusion')"
+          test "$status" = success
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name watch-together-macos-latest --dir artifact
+          test -s artifact/dmg/Watch_Together_macOS.dmg
+
+      - name: Package a simple ZIP with DMG at its root
+        shell: bash
+        run: |
+          mkdir -p release
+          cp artifact/dmg/Watch_Together_macOS.dmg release/
+          cp docs/RELEASE_NOTES.md release/README.txt
+          python3 - <<'PY'
+          import json, os, pathlib, zipfile
+          root = pathlib.Path("release")
+          (root / "BUILD.json").write_text(json.dumps({
+              "commit": os.environ["SOURCE_SHA"],
+              "build": os.environ["SOURCE_RUN_URL"]
+          }, indent=2) + "\n")
+          with zipfile.ZipFile(root / "WatchTogether-macOS.zip", "w", compression=zipfile.ZIP_STORED) as z:
+              for name in ["Watch_Together_macOS.dmg", "README.txt", "BUILD.json"]:
+                  z.write(root / name, name)
+          with zipfile.ZipFile(root / "WatchTogether-macOS.zip") as z:
+              assert z.testzip() is None
+              assert "Watch_Together_macOS.dmg" in z.namelist()
+          PY
+          cd release
+          sha256sum Watch_Together_macOS.dmg WatchTogether-macOS.zip > SHA256SUMS.txt
+
+      - name: Publish DMG, ZIP and checksums in GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="preview-${SOURCE_SHA:0:7}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/Watch_Together_macOS.dmg release/WatchTogether-macOS.zip release/SHA256SUMS.txt --clobber
+          else
+            gh release create "$tag" release/Watch_Together_macOS.dmg release/WatchTogether-macOS.zip release/SHA256SUMS.txt --target "$SOURCE_SHA" --title "Watch Together — macOS (${SOURCE_SHA:0:7})" --notes-file docs/RELEASE_NOTES.md --prerelease
+          fi
+          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
