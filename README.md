@@ -13,26 +13,26 @@ TCP 8999 либо общая VPN. Полная ссылка и Connection Code �
 
 [Инструкция подключения и проверки](docs/SELF_HOSTED_SYNC.md).
 
-## Предыдущая опубликованная сборка от 22 октября 2026
+## Скачать актуальную сборку
 
 Изменения находятся в ветке **main**:
 
-- Видео встраивается в окно приложения: OpenGL Render API на macOS, D3D11 на Windows.
+- Видео встраивается в окно приложения: OpenGL Render API на macOS, canvas через libmpv Software Render API на Windows (до 1280×720, около 30 кадров/с).
 - Исправлены хоткеи, включая русскую раскладку, и полноэкранный режим окна.
 - Исправлены обновление списка аудиодорожек, встроенные ASS и загрузка внешних SRT.
 - Добавлена новая бело-серебристая иконка с чёрным Play.
 
 ### Скачать приложение для Windows
 
-**[Скачать установщик EXE (Windows x64)](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/WatchTogether-Windows-x64-Setup.exe)** · **[Скачать ZIP](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/WatchTogether-Windows-x64.zip)**
+**[Скачать установщик EXE (Windows x64)](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-a9ab0fd/WatchTogether-Windows-x64-Setup.exe)** · **[Скачать ZIP](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-a9ab0fd/WatchTogether-Windows-x64.zip)**
 
 Windows CI проходит тесты, сборку установщика, тихую установку и загрузку установленной libmpv. EXE включает медиабиблиотеку.
 
 ### Скачать приложение для Mac
 
-**[Скачать ZIP с новой иконкой](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/WatchTogether-macOS.zip)** · **[Скачать DMG напрямую](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/Watch_Together_macOS.dmg)**
+**[Скачать ZIP для Mac](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-a9ab0fd/WatchTogether-macOS.zip)** · **[Скачать DMG напрямую](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-a9ab0fd/Watch_Together_macOS.dmg)**
 
-[Описание релиза](https://github.com/dmsznv-dot/WatchTogether/releases/tag/preview-3121b2a). В ZIP из Releases установщик `Watch_Together_macOS.dmg` лежит прямо в корне архива.
+[Описание релиза](https://github.com/dmsznv-dot/WatchTogether/releases/tag/preview-a9ab0fd). В ZIP из Releases установщик `Watch_Together_macOS.dmg` лежит прямо в корне архива.
 
 **Code → Download ZIP скачивает только исходники. В этом ZIP приложения и DMG нет.**
 
@@ -86,7 +86,7 @@ Windows CI проходит тесты, сборку установщика, т�
 
 ### 🪟 Windows (10 / 11)
 
-1. Download the **[Windows x64 EXE installer](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3121b2a/WatchTogether-Windows-x64-Setup.exe)** from Releases.
+1. Download the **[Windows x64 EXE installer](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-a9ab0fd/WatchTogether-Windows-x64-Setup.exe)** from Releases.
 2. Run the installer and launch **Watch Together** from your Start menu.  
    *(Embedded hardware-accelerated video decoding is included out of the box).*
 
