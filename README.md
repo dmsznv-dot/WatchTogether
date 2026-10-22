@@ -11,9 +11,9 @@
 
 ### Скачать приложение для Mac
 
-**[Скачать готовую macOS-сборку](https://github.com/dmsznv-dot/WatchTogether/actions/runs/39794281762/artifacts/12432389891)** — в ней ещё предыдущая иконка.
+**[Скачать ZIP с новой иконкой](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-b180e20/WatchTogether-macOS.zip)** · **[Скачать DMG напрямую](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-b180e20/Watch_Together_macOS.dmg)**
 
-[Сборка с новой иконкой](https://github.com/dmsznv-dot/WatchTogether/actions/runs/39798310203) пока ожидает выполнения. Раздел Releases пока пуст; опубликованного релиза с новой иконкой ещё нет.
+[Описание релиза](https://github.com/dmsznv-dot/WatchTogether/releases/tag/preview-b180e20). В ZIP из Releases установщик `Watch_Together_macOS.dmg` лежит прямо в корне архива.
 
 **Code → Download ZIP скачивает только исходники. В этом ZIP приложения и DMG нет.**
 
