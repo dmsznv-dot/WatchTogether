@@ -57,5 +57,14 @@
     "category": "Video",
     "shortDescription": "Synchronized collaborative video player",
     "longDescription": "Watch Together combines a local media player with direct peer-to-peer synchronized co-watching."
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "watchtogether"
+        ]
+      }
+    }
   }
 }

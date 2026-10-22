@@ -5,6 +5,7 @@
 //! auto-reconnection state management.
 
 pub mod error;
+pub mod local_sync;
 pub mod p2p;
 pub mod proxy;
 pub mod reconnect;

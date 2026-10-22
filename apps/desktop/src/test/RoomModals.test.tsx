@@ -25,6 +25,7 @@ describe('Room Collaboration UI Modals', () => {
 
       expect(screen.getByTestId('room-code-display')).toHaveTextContent('K7M2P9');
 
+      fireEvent.change(screen.getByTestId('host-address-input'), {target:{value:'192.168.1.25:8999'}});
       const copyBtn = screen.getByTestId('copy-code-btn');
       await act(async () => {
         fireEvent.click(copyBtn);
@@ -35,6 +36,14 @@ describe('Room Collaboration UI Modals', () => {
   });
 
   describe('JoinRoomModal', () => {
+    it('passes the host address from a complete invitation to the connection command', async () => {
+      const join = vi.fn().mockResolvedValue({});
+      render(<JoinRoomModal isOpen onClose={vi.fn()} initialDisplayName="Bob" isLoading={false} error={null} onJoinRoom={join} />);
+      fireEvent.change(screen.getByTestId('room-code-input'), {target:{value:'watchtogether://join/K7M2P9?token='+'a'.repeat(64)+'&host=203.0.113.4%3A8999'}});
+      expect(screen.getByTestId('join-host-address-input')).toHaveValue('203.0.113.4:8999');
+      await act(async () => { fireEvent.click(screen.getByTestId('join-room-submit-btn')); });
+      expect(join).toHaveBeenCalledWith('K7M2P9','a'.repeat(64),'Bob','203.0.113.4:8999');
+    });
     it('normalizes room code input to uppercase', () => {
       render(
         <JoinRoomModal

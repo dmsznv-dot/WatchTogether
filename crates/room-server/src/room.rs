@@ -117,6 +117,7 @@ impl Room {
         let current_pos = self.current_projected_position(now_ms);
         let mut projected_playback = self.playback.clone();
         projected_playback.position_ms = current_pos;
+        projected_playback.updated_at_server_ms = now_ms;
 
         RoomStateSnapshot {
             room_id: self.room_id.clone(),

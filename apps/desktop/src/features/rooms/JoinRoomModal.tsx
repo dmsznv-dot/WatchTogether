@@ -1,4 +1,4 @@
-import React, { useState, ChangeEvent } from 'react';
+import React, { useState, useEffect, ChangeEvent } from 'react';
 import { AlertCircle, LogIn } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
@@ -15,7 +15,8 @@ export interface JoinRoomModalProps {
   initialDisplayName: string;
   isLoading: boolean;
   error: string | null;
-  onJoinRoom: (code: string, token: string, displayName: string) => Promise<unknown>;
+  initialInvitation?: string;
+  onJoinRoom: (code: string, token: string, displayName: string, hostAddr?: string) => Promise<unknown>;
 }
 
 export function JoinRoomModal({
@@ -24,12 +25,23 @@ export function JoinRoomModal({
   initialDisplayName,
   isLoading,
   error,
+  initialInvitation,
   onJoinRoom,
 }: JoinRoomModalProps) {
   const [codeOrUrl, setCodeOrUrl] = useState('');
+  const [hostAddr, setHostAddr] = useState('');
   const [token, setToken] = useState('');
   const [displayName, setDisplayName] = useState(initialDisplayName || 'Guest');
   const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!initialInvitation) return;
+    const parsed = parseJoinInput(initialInvitation);
+    setCodeOrUrl(parsed.roomCode);
+    setToken(parsed.roomToken || '');
+    setHostAddr(parsed.hostAddr || '');
+    setLocalError(null);
+  }, [initialInvitation]);
 
   const forbiddenChars = getForbiddenCrockfordChars(codeOrUrl);
 
@@ -38,8 +50,9 @@ export function JoinRoomModal({
     setLocalError(null);
 
     // If a full deep link is pasted:
-    if (raw.trim().startsWith('watchtogether://')) {
+    if (raw.trim().startsWith('watchtogether://') || raw.trim().startsWith('WT1-')) {
       const parsed = parseJoinInput(raw);
+      setHostAddr(parsed.hostAddr || '');
       setCodeOrUrl(parsed.roomCode);
       if (parsed.roomToken) {
         setToken(parsed.roomToken);
@@ -63,8 +76,9 @@ export function JoinRoomModal({
       return;
     }
 
+    if (!hostAddr.trim()) { setLocalError('Provide the host address or paste a complete invitation.'); return; }
     try {
-      await onJoinRoom(sanitizedCode, token.trim(), displayName.trim() || 'Guest');
+      await onJoinRoom(sanitizedCode, token.trim(), displayName.trim() || 'Guest', hostAddr.trim());
       onClose();
     } catch (err: any) {
       setLocalError(err?.message || 'Failed to join room');
@@ -78,7 +92,7 @@ export function JoinRoomModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Join Watch Together Room"
-      description="Enter the 6-character room code or paste an invitation link."
+      description="Open your own copy of the movie first, then paste the complete invitation link or connection code."
     >
       <div className="flex flex-col gap-4 pt-1">
         {(error || localError) && (
@@ -100,7 +114,7 @@ export function JoinRoomModal({
             value={codeOrUrl}
             onChange={handleCodeOrUrlChange}
             placeholder="e.g. K7M2P9 or watchtogether://..."
-            maxLength={120}
+            maxLength={2048}
             className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 font-mono tracking-wider text-base text-zinc-100 placeholder-zinc-500 uppercase focus:outline-none focus:border-indigo-500"
             data-testid="room-code-input"
           />
@@ -113,6 +127,10 @@ export function JoinRoomModal({
             </p>
           )}
         </div>
+
+        <label className="text-xs text-zinc-400">Host address
+          <input data-testid="join-host-address-input" value={hostAddr} onChange={e => setHostAddr(e.target.value)} placeholder="IP or hostname:8999" className="mt-1 w-full p-2 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100" />
+        </label>
 
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">

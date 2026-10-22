@@ -23,6 +23,9 @@ export function useRoom() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenError: (() => void) | undefined;
+    let disposed = false;
+    roomApi.onError((payload) => setError(payload.message)).then(fn => { if (disposed) fn(); else unlistenError = fn; });
     roomApi
       .onUpdate((payload: RoomUpdatePayload) => {
         setSessionType(payload.session_type);
@@ -33,10 +36,12 @@ export function useRoom() {
         }
       })
       .then((fn) => {
-        unlisten = fn;
+        if (disposed) fn(); else unlisten = fn;
       });
 
     return () => {
+      disposed = true;
+      unlistenError?.();
       if (unlisten) unlisten();
       if (toastTimerRef.current !== null) {
         window.clearTimeout(toastTimerRef.current);
@@ -95,13 +100,14 @@ export function useRoom() {
     async (
       code: string,
       token: string,
-      displayName?: string
+      displayName?: string,
+      hostAddr?: string
     ): Promise<RoomJoinResponse> => {
       setIsLoading(true);
       setError(null);
       const normalizedCode = normalizeRoomCode(code);
       try {
-        const res = await roomApi.join(normalizedCode, token, displayName);
+        const res = await roomApi.join(normalizedCode, token, displayName, hostAddr);
         setSessionType('guest');
         setRoomCode(res.room_code);
         setRoomToken(res.room_token);

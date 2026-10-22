@@ -5,7 +5,6 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
-    response::IntoResponse,
     routing::get,
     Router,
 };
@@ -19,7 +18,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex, RwLock};
 
 pub fn current_time_ms() -> u64 {
     std::time::SystemTime::now()
@@ -96,17 +95,26 @@ pub struct RoomServerHandle {
     pub manager: Arc<RoomManager>,
     pub shutdown_tx: Option<oneshot::Sender<()>>,
     pub join_handle: tokio::task::JoinHandle<()>,
+    shutdown_sockets: watch::Sender<bool>,
 }
 
 impl RoomServerHandle {
     pub async fn shutdown(mut self) -> Result<(), RoomServerError> {
+        let _ = self.shutdown_sockets.send(true);
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
-        self.join_handle
+        (&mut self.join_handle)
             .await
             .map_err(|e| RoomServerError::Internal(e.to_string()))?;
         Ok(())
+    }
+}
+
+impl Drop for RoomServerHandle {
+    fn drop(&mut self) {
+        let _ = self.shutdown_sockets.send(true);
+        self.join_handle.abort();
     }
 }
 
@@ -117,8 +125,46 @@ impl RoomServer {
         bind_addr: SocketAddr,
         manager: Arc<RoomManager>,
     ) -> Result<RoomServerHandle, RoomServerError> {
+        Self::start_mode(bind_addr, manager, true).await
+    }
+
+    /// Desktop hosts expose only rooms they create locally, not remote room creation.
+    pub async fn start_existing(
+        bind_addr: SocketAddr,
+        manager: Arc<RoomManager>,
+    ) -> Result<RoomServerHandle, RoomServerError> {
+        Self::start_mode(bind_addr, manager, false).await
+    }
+
+    async fn start_mode(
+        bind_addr: SocketAddr,
+        manager: Arc<RoomManager>,
+        allow_create: bool,
+    ) -> Result<RoomServerHandle, RoomServerError> {
+        let (shutdown_sockets, sockets_closed) = watch::channel(false);
+        let close_on_shutdown = shutdown_sockets.clone();
         let app = Router::new()
-            .route("/ws", get(ws_handler))
+            .route(
+                "/ws",
+                get(
+                    move |ws: WebSocketUpgrade, State(manager): State<Arc<RoomManager>>| {
+                        let sockets_closed = sockets_closed.clone();
+                        async move {
+                            ws.max_message_size(64 * 1024).on_upgrade(move |socket| async move {
+                                let mut cancel = sockets_closed.clone();
+                                if *cancel.borrow() { return; }
+                                // Cancellation surrounds the whole handler, including sends to
+                                // a slow/non-reading peer. Dropping it closes the TCP socket.
+                                tokio::select! {
+                                    biased;
+                                    _ = cancel.changed() => {},
+                                    _ = handle_socket(socket, manager, allow_create, sockets_closed) => {},
+                                }
+                            })
+                        }
+                    },
+                ),
+            )
             .with_state(Arc::clone(&manager));
 
         let listener = TcpListener::bind(bind_addr).await?;
@@ -129,6 +175,7 @@ impl RoomServer {
             axum::serve(listener, app)
                 .with_graceful_shutdown(async move {
                     let _ = shutdown_rx.await;
+                    let _ = close_on_shutdown.send(true);
                 })
                 .await
                 .unwrap_or_default();
@@ -139,6 +186,7 @@ impl RoomServer {
             manager,
             shutdown_tx: Some(shutdown_tx),
             join_handle,
+            shutdown_sockets,
         })
     }
 
@@ -147,14 +195,15 @@ impl RoomServer {
     }
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(manager): State<Arc<RoomManager>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, manager))
-}
-
-async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>) {
+async fn handle_socket(
+    socket: WebSocket,
+    manager: Arc<RoomManager>,
+    allow_create: bool,
+    mut closed: watch::Receiver<bool>,
+) {
+    if *closed.borrow() {
+        return;
+    }
     let (mut ws_sink, mut ws_stream) = socket.split();
     let (tx_direct, mut rx_direct) = mpsc::unbounded_channel::<ServerMessage>();
 
@@ -165,6 +214,12 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>) {
 
     loop {
         tokio::select! {
+            biased;
+            _ = closed.changed() => {
+                let _ = tokio::time::timeout(std::time::Duration::from_millis(100), ws_sink.send(Message::Close(None))).await;
+                break;
+            }
+
             // Direct messages to this client
             Some(msg) = rx_direct.recv() => {
                 let is_kick_or_close = matches!(
@@ -226,7 +281,17 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>) {
                                     message: format!("Malformed message: {}", e),
                                 });
                             }
+                            Ok(ClientMessage::SessionIdentify) => {
+                                if let Some(id)=&current_participant {let _=tx_direct.send(ServerMessage::SessionIdentity{participant_id:id.clone()});}
+                            }
+                            Ok(ClientMessage::RoomGetState) => {
+                                if let Some(room)=&current_room {let _=tx_direct.send(ServerMessage::RoomState(room.lock().await.get_snapshot(now_ms)));}
+                            }
                             Ok(ClientMessage::RoomCreate { host_name, video, permission_mode }) => {
+                                if !allow_create || current_room.is_some() {
+                                    let _ = tx_direct.send(ServerMessage::Error {code: "PERMISSION_DENIED".into(), message: "Create rooms from the host application".into()});
+                                    continue;
+                                }
                                 let (room_arc, _code, _token, host_id) = manager.create_room(
                                     &host_name,
                                     video,
@@ -253,6 +318,10 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>) {
                                 let _ = tx_direct.send(ServerMessage::RoomState(snapshot));
                             }
                             Ok(ClientMessage::RoomJoin { room_code, room_token, display_name, .. }) => {
+                                if current_room.is_some() {
+                                    let _ = tx_direct.send(ServerMessage::Error {code:"SESSION_ALREADY_ACTIVE".into(),message:"Leave the current room before joining another".into()});
+                                    continue;
+                                }
                                 match manager.get_room_by_code(&room_code).await {
                                     None => {
                                         let _ = tx_direct.send(ServerMessage::Error {
@@ -300,6 +369,7 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>) {
                             Ok(ClientMessage::PlaybackPlay { revision, .. }) => {
                                 if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
                                     let mut room = room_arc.lock().await;
+                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
                                     if let Err(err) = room.apply_play(p_id, revision, now_ms) {
                                         let _ = tx_direct.send(ServerMessage::Error {
                                             code: err.to_error_code().as_str().to_string(),
@@ -311,6 +381,7 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>) {
                             Ok(ClientMessage::PlaybackPause { revision, position_ms, .. }) => {
                                 if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
                                     let mut room = room_arc.lock().await;
+                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
                                     if let Err(err) = room.apply_pause(p_id, revision, position_ms, now_ms) {
                                         let _ = tx_direct.send(ServerMessage::Error {
                                             code: err.to_error_code().as_str().to_string(),
@@ -322,6 +393,7 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>) {
                             Ok(ClientMessage::PlaybackSeek { revision, target_position_ms, .. }) => {
                                 if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
                                     let mut room = room_arc.lock().await;
+                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
                                     if let Err(err) = room.apply_seek(p_id, revision, target_position_ms, now_ms) {
                                         let _ = tx_direct.send(ServerMessage::Error {
                                             code: err.to_error_code().as_str().to_string(),
@@ -333,6 +405,7 @@ async fn handle_socket(socket: WebSocket, manager: Arc<RoomManager>) {
                             Ok(ClientMessage::PlaybackSpeed { revision, speed, .. }) => {
                                 if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
                                     let mut room = room_arc.lock().await;
+                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
                                     if let Err(err) = room.apply_speed(p_id, revision, speed, now_ms) {
                                         let _ = tx_direct.send(ServerMessage::Error {
                                             code: err.to_error_code().as_str().to_string(),

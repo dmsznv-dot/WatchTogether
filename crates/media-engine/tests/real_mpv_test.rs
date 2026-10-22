@@ -4,6 +4,32 @@ use std::time::{Duration, Instant};
 
 #[test]
 #[ignore = "requires libmpv and WT_TEST_MEDIA fixture"]
+fn embedded_renderer_produces_visible_pixels_without_a_native_window() {
+    let path = std::env::var("WT_TEST_MEDIA").expect("set WT_TEST_MEDIA");
+    let player = std::sync::Arc::new(
+        MpvPlayer::new_with_options(&[("vo", "libmpv"), ("ao", "null")]).unwrap(),
+    );
+    let mut renderer = player.software_renderer().unwrap();
+    player.open_file(&path).unwrap();
+    player.play().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let pixels = renderer.render(320, 180).unwrap();
+        assert_eq!(pixels.len(), 320 * 180 * 4);
+        assert!(pixels.chunks_exact(4).all(|p| p[3] == 255));
+        if pixels
+            .chunks_exact(4)
+            .any(|p| p[0] > 20 || p[1] > 20 || p[2] > 20)
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    panic!("embedded renderer never produces visible video pixels");
+}
+
+#[test]
+#[ignore = "requires libmpv and WT_TEST_MEDIA fixture"]
 fn real_decoder_announces_tracks_and_switches_audio_and_subtitles() {
     let path = std::env::var("WT_TEST_MEDIA").expect("set WT_TEST_MEDIA");
     let player = MpvPlayer::new_with_options(&[("vo", "null"), ("ao", "null")]).unwrap();

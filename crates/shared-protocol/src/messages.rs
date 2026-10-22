@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum ClientMessage {
+    #[serde(rename = "session.identify")]
+    SessionIdentify,
+    #[serde(rename = "room.get_state")]
+    RoomGetState,
     #[serde(rename = "room.create")]
     RoomCreate {
         host_name: String,
@@ -89,6 +93,8 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum ServerMessage {
+    #[serde(rename = "session.identity")]
+    SessionIdentity { participant_id: ParticipantId },
     #[serde(rename = "room.state")]
     RoomState(RoomStateSnapshot),
 

@@ -3,9 +3,8 @@
 pub mod commands;
 pub mod error;
 pub mod events;
+mod self_host;
 pub mod state;
-#[cfg(target_os = "windows")]
-mod video_windows;
 
 use media_engine::state::PlayerState;
 use media_engine::track::MediaTrack;
@@ -155,8 +154,8 @@ async fn cmd_room_create(
     host_name: Option<String>,
     video_path: Option<String>,
     permission_mode: Option<PermissionMode>,
-) -> Result<commands::RoomCreateResponse, String> {
-    commands::cmd_room_create(&state, host_name, video_path, permission_mode)
+) -> Result<self_host::CreateResponse, String> {
+    self_host::create(&state, host_name, video_path, permission_mode)
         .await
         .map_err(|e| e.to_string())
 }
@@ -167,8 +166,9 @@ async fn cmd_room_join(
     room_code: String,
     room_token: String,
     display_name: Option<String>,
+    host_addr: Option<String>,
 ) -> Result<commands::RoomJoinResponse, String> {
-    commands::cmd_room_join(&state, room_code, room_token, display_name, None)
+    self_host::join(&state, room_code, room_token, display_name, host_addr)
         .await
         .map_err(|e| e.to_string())
 }
@@ -184,7 +184,7 @@ async fn cmd_room_leave(state: tauri::State<'_, Arc<AppState>>) -> Result<(), St
 async fn cmd_room_get_state(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<RoomStateSnapshot, String> {
-    commands::cmd_room_get_state(&state)
+    self_host::get_state(&state)
         .await
         .map_err(|e| e.to_string())
 }
@@ -194,7 +194,7 @@ async fn cmd_room_set_permissions(
     state: tauri::State<'_, Arc<AppState>>,
     permission_mode: PermissionMode,
 ) -> Result<(), String> {
-    commands::cmd_room_set_permissions(&state, permission_mode)
+    self_host::set_permissions(&state, permission_mode)
         .await
         .map_err(|e| e.to_string())
 }
@@ -204,7 +204,7 @@ async fn cmd_room_kick_participant(
     state: tauri::State<'_, Arc<AppState>>,
     target_id: String,
 ) -> Result<(), String> {
-    commands::cmd_room_kick_participant(&state, target_id)
+    self_host::kick(&state, target_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -227,6 +227,35 @@ async fn cmd_dialog_open_file(
         .map_err(|e| e.to_string())
 }
 
+#[cfg(target_os = "windows")]
+struct WindowsFrames(Arc<std::sync::Mutex<media_engine::mpv::SoftwareRenderer>>);
+#[tauri::command]
+async fn cmd_player_frame(
+    app: tauri::AppHandle,
+    width: u32,
+    height: u32,
+) -> Result<tauri::ipc::Response, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let renderer = Arc::clone(&app.state::<WindowsFrames>().0);
+        let bytes = tauri::async_runtime::spawn_blocking(move || {
+            renderer
+                .lock()
+                .map_err(|e| e.to_string())?
+                .render(width, height)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        Ok(tauri::ipc::Response::new(bytes))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, width, height);
+        Err("Canvas renderer is Windows-only".into())
+    }
+}
+
 /// Initializes desktop application runtime backend with Tauri 2.
 pub fn run() {
     tracing_subscriber::fmt::init();
@@ -235,6 +264,13 @@ pub fn run() {
     let event_sink = Arc::new(TauriEventSink::new());
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(move |app| {
@@ -248,14 +284,13 @@ pub fn run() {
             )])?);
             #[cfg(target_os = "windows")]
             let player = {
-                let wid = (video_windows::attach(&window)? as u32).to_string();
-                Arc::new(media_engine::MpvPlayer::new_with_options(&[
-                    ("wid", &wid),
-                    ("vo", "gpu-next"),
-                    ("gpu-api", "d3d11"),
-                    ("input-cursor", "no"),
-                    ("input-vo-keyboard", "no"),
-                ])?)
+                let player = Arc::new(media_engine::MpvPlayer::new_with_options(&[(
+                    "vo", "libmpv",
+                )])?);
+                app.manage(WindowsFrames(Arc::new(std::sync::Mutex::new(
+                    player.software_renderer()?,
+                ))));
+                player
             };
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             return Err("Only macOS and Windows embedding is supported".into());
@@ -281,6 +316,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            cmd_player_frame,
             cmd_player_open_file,
             cmd_player_play,
             cmd_player_pause,

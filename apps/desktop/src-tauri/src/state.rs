@@ -50,6 +50,8 @@ pub struct GuestSession {
 /// Global concurrent state managed by desktop backend.
 pub struct AppState {
     pub player: Arc<dyn MediaPlayer>,
+    pub live_room: Arc<Mutex<Option<Arc<network::local_sync::LocalSession>>>>,
+    pub room_events_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub session: Arc<RwLock<SessionState>>,
     pub sync_coordinator: Arc<Mutex<ClientSyncCoordinator>>,
     pub event_sink: Arc<dyn EventSink>,
@@ -138,6 +140,8 @@ impl AppState {
     pub fn new(player: Arc<dyn MediaPlayer>, event_sink: Arc<dyn EventSink>) -> Arc<Self> {
         let state = Arc::new(Self {
             player,
+            live_room: Arc::new(Mutex::new(None)),
+            room_events_task: Mutex::new(None),
             session: Arc::new(RwLock::new(SessionState::Solo)),
             sync_coordinator: Arc::new(Mutex::new(ClientSyncCoordinator::new(0))),
             event_sink,
@@ -243,6 +247,22 @@ impl AppState {
     /// Cascades teardown of host/guest sessions, MediaServer, RoomServer, and LoopbackProxy.
     /// Resolves Reviewer M2 finding on ungraceful host drop socket/file leaks.
     pub async fn teardown(&self) -> Result<(), AppError> {
+        if let Some(task) = self.room_events_task.lock().await.take() {
+            task.abort();
+        }
+        let live = self.live_room.lock().await.take();
+        if let Some(session) = live {
+            session.close().await;
+            let _ = self.event_sink.emit_serializable(
+                "room://update",
+                &RoomUpdatePayload {
+                    session_type: "none".into(),
+                    room_code: None,
+                    snapshot: None,
+                },
+            );
+        }
+
         let mut session_guard = self.session.write().await;
         match std::mem::replace(&mut *session_guard, SessionState::Solo) {
             SessionState::Host(mut host) => {
