@@ -9,8 +9,8 @@ describe('App Integration', () => {
     mockBackend.reset();
   });
 
-  it('renders application with HUD controls and empty video hero', () => {
-    render(<App />);
+  it('renders application with HUD controls and empty video hero', async () => {
+    await act(async () => { render(<App />); });
 
     expect(screen.getByTestId('video-canvas-container')).toBeInTheDocument();
     expect(screen.getByTestId('header-hud')).toBeInTheDocument();

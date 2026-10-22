@@ -48,3 +48,8 @@
 .animate-ripple {
   animation: rippleScale 500ms ease-out forwards;
 }
+
+/* The native libmpv surface sits behind the webview HUD. */
+html[data-native], html[data-native] body, html[data-native] #root {
+  background: transparent;
+}

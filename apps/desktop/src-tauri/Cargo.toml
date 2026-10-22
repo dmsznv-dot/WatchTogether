@@ -21,7 +21,7 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
-tauri = { version = "2", default-features = false, features = ["wry"] }
+tauri = { version = "2", default-features = false, features = ["wry", "macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 

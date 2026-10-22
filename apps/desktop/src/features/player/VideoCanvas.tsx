@@ -1,7 +1,8 @@
-import React, { useState, useRef, useCallback, DragEvent } from 'react';
+import React, { useState, useRef, useCallback, useEffect, DragEvent } from 'react';
 import { Film, UploadCloud } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { PlayPauseRipple } from './PlayPauseRipple';
+import { hasTauri } from '../../services/ipc';
 import { cn } from '../../utils/cn';
 
 export interface VideoCanvasProps {
@@ -27,9 +28,34 @@ export function VideoCanvas({
   onToggleFullscreen,
   onSelectFileClick,
 }: VideoCanvasProps) {
+  const native = hasTauri();
   const [isDragOver, setIsDragOver] = useState(false);
   const [rippleType, setRippleType] = useState<'play' | 'pause' | null>(null);
   const clickTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!native) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    import('@tauri-apps/api/webviewWindow').then(({ getCurrentWebviewWindow }) =>
+      getCurrentWebviewWindow().onDragDropEvent(({ payload }) => {
+        if (disposed) return;
+        setIsDragOver(payload.type === 'over' || payload.type === 'enter');
+        if (payload.type === 'drop') {
+          const path = payload.paths[0];
+          if (!path) return;
+          if (/\.(srt|ass)$/i.test(path)) onLoadSubtitle?.(path);
+          else if (/\.(mp4|mov|mkv)$/i.test(path)) onOpenFile(path);
+        }
+      })
+    ).then((fn) => { if (disposed) fn(); else unlisten = fn; })
+      .catch((err) => console.error('Native drag and drop failed:', err));
+    return () => { disposed = true; unlisten?.(); };
+  }, [native, onOpenFile, onLoadSubtitle]);
+
+  useEffect(() => () => {
+    if (clickTimerRef.current !== null) window.clearTimeout(clickTimerRef.current);
+  }, []);
 
   const triggerRipple = useCallback((type: 'play' | 'pause') => {
     setRippleType(type);
@@ -93,6 +119,7 @@ export function VideoCanvas({
       onDrop={handleDrop}
       className={cn(
         'relative w-full h-full bg-black overflow-hidden flex items-center justify-center',
+        native && currentFile && 'bg-transparent',
         hideCursor && 'cursor-none'
       )}
     >
@@ -101,7 +128,7 @@ export function VideoCanvas({
         data-testid="aspect-ratio-viewport"
         onClick={currentFile ? handleClick : undefined}
         style={{ aspectRatio }}
-        className="relative max-w-full max-h-full w-full h-full flex items-center justify-center bg-black select-none"
+        className={cn("relative max-w-full max-h-full w-full h-full flex items-center justify-center select-none", native && currentFile ? "bg-transparent" : "bg-black")}
       >
         {!currentFile ? (
           // Empty State Hero
@@ -124,8 +151,10 @@ export function VideoCanvas({
               Open Video File
             </Button>
           </div>
+        ) : native ? (
+          <div data-testid="media-surface" className="absolute inset-0 bg-transparent" aria-label="Video" />
         ) : (
-          // Video Canvas / Surface
+          // Browser preview only
           <div
             data-testid="media-surface"
             className="w-full h-full relative flex items-center justify-center bg-zinc-950 overflow-hidden"

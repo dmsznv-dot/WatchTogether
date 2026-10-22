@@ -25,27 +25,28 @@ export function useKeyboardShortcuts({
     if (disabled) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Input field guard: Never intercept key events when typing into an input or editable field
-      const target = e.target as HTMLElement | null;
-      if (target) {
-        const tagName = target.tagName?.toLowerCase();
-        const isEditable = typeof target.getAttribute === 'function' && target.getAttribute('contenteditable') === 'true';
-        if (tagName === 'input' || tagName === 'textarea' || isEditable) {
-          return;
-        }
-      }
+      if (e.defaultPrevented || e.isComposing) return;
+      const target = e.target;
+      if (target instanceof Element && target.closest(
+        'input, textarea, select, [contenteditable]:not([contenteditable="false"])'
+      )) return;
+
+      const isKey = (code: string, key: string) =>
+        e.code === code || (!e.code && e.key.toLowerCase() === key);
 
       // Cmd+O (macOS) / Ctrl+O (Windows)
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'o' || e.key === 'O')) {
+      if ((e.metaKey || e.ctrlKey) && isKey('KeyO', 'o') && !e.altKey) {
         e.preventDefault();
-        onOpenFile?.();
+        if (!e.repeat) onOpenFile?.();
         return;
       }
+
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       // Space: Play / Pause
       if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault();
-        onTogglePlayPause?.();
+        if (!e.repeat) onTogglePlayPause?.();
         return;
       }
 
@@ -76,16 +77,16 @@ export function useKeyboardShortcuts({
       }
 
       // F / f: Toggle Fullscreen
-      if (e.key === 'f' || e.key === 'F') {
+      if (isKey('KeyF', 'f')) {
         e.preventDefault();
-        onToggleFullscreen?.();
+        if (!e.repeat) onToggleFullscreen?.();
         return;
       }
 
       // M / m: Toggle Mute
-      if (e.key === 'm' || e.key === 'M') {
+      if (isKey('KeyM', 'm')) {
         e.preventDefault();
-        onToggleMute?.();
+        if (!e.repeat) onToggleMute?.();
         return;
       }
 

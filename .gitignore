@@ -26,3 +26,8 @@ Thumbs.db
 # Environment / local configs
 .env
 .env.local
+
+# Tauri generated schemas and downloaded runtime
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/mpv-2.dll
+__pycache__/
