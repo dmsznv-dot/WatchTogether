@@ -1,5 +1,28 @@
 # Watch Together 🎬🍿
 
+## Обновление от 22 октября 2026
+
+Изменения находятся в ветке **main**:
+
+- Видео встраивается в окно приложения: OpenGL Render API на macOS, D3D11 на Windows.
+- Исправлены хоткеи, включая русскую раскладку, и полноэкранный режим окна.
+- Исправлены обновление списка аудиодорожек, встроенные ASS и загрузка внешних SRT.
+- Добавлена новая бело-серебристая иконка с чёрным Play.
+
+### Скачать приложение для Mac
+
+**[Скачать готовую macOS-сборку](https://github.com/dmsznv-dot/WatchTogether/actions/runs/39794281762/artifacts/12432389891)** — в ней ещё предыдущая иконка.
+
+[Сборка с новой иконкой](https://github.com/dmsznv-dot/WatchTogether/actions/runs/39798310203) пока ожидает выполнения. Раздел Releases пока пуст; опубликованного релиза с новой иконкой ещё нет.
+
+**Code → Download ZIP скачивает только исходники. В этом ZIP приложения и DMG нет.**
+
+В ZIP из Actions с названием `watch-together-macos-latest.zip` установщик лежит по пути `dmg/Watch_Together_macOS.dmg`.
+
+Это тестовое обновление: вывод видео и управление требуют проверки на реальных macOS/Windows. Windows-инсталлятор пока не публикуется: Windows CI не проходит тесты.
+
+---
+
 <div align="center">
 
 **Cross-Platform Synchronized Collaborative Media Player**  
