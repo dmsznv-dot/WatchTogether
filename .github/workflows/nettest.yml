@@ -1,0 +1,106 @@
+name: Network Test Utility
+
+# Builds tools/nettest (iroh connectivity test) for macOS and Windows
+# and publishes it to the "nettest" GitHub release.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/nettest/**"
+      - ".github/workflows/nettest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macos
+          - os: windows-latest
+            name: windows
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: tools/nettest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          if [ "${{ matrix.name }}" = macos ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          fi
+          rustc --version
+
+      - name: Build (macOS universal)
+        if: matrix.name == 'macos'
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/wt-nettest \
+            target/x86_64-apple-darwin/release/wt-nettest \
+            -output dist/wt-nettest
+          codesign --force -s - dist/wt-nettest
+          chmod +x dist/wt-nettest
+          (cd dist && zip -9 wt-nettest-macos.zip wt-nettest)
+          file dist/wt-nettest
+
+      - name: Build (Windows x64)
+        if: matrix.name == 'windows'
+        run: |
+          cargo build --release
+          mkdir -p dist
+          cp target/release/wt-nettest.exe dist/wt-nettest-windows.exe
+
+      - name: Smoke test (relay reachability from CI)
+        run: |
+          if [ "${{ matrix.name }}" = macos ]; then BIN=dist/wt-nettest; else BIN=dist/wt-nettest-windows.exe; fi
+          # host mode prints diagnostics, then waits for Enter; feed it one.
+          # Informational only: runner networks vary, so a miss warns instead of failing.
+          (sleep 25; echo) | "$BIN" host | tee smoke.txt || true
+          if grep -q "WT1-" smoke.txt; then
+            echo "Smoke test OK: invite code printed"
+          else
+            echo "::warning::Smoke test: no WT1- invite code in output (see log above)"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wt-nettest-${{ matrix.name }}
+          path: |
+            tools/nettest/dist/wt-nettest-macos.zip
+            tools/nettest/dist/wt-nettest-windows.exe
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish to the "nettest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -la out
+          if ! gh release view nettest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create nettest --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "Network test utility" \
+              --notes "Проверка соединения Watch Together через iroh (без настройки роутера). Инструкция: tools/nettest/README.md"
+          fi
+          gh release upload nettest out/* --repo "$GITHUB_REPOSITORY" --clobber
