@@ -40,6 +40,16 @@ Windows CI проходит тесты, сборку установщика, т�
 
 Это тестовое обновление: вывод видео и управление требуют проверки на реальных macOS/Windows. Windows-инсталлятор опубликован в Releases; проверка интерактивного воспроизведения на реальном Windows остаётся необходимой.
 
+## Проверка соединения
+
+Отдельная консольная утилита `wt-nettest` проверяет, соединятся ли два компьютера в разных
+сетях без настройки роутера (iroh: QUIC, пробивка NAT, запасной relay). Видео не передаётся,
+только пинги в течение 60 секунд.
+
+**[Скачать для Mac](https://github.com/dmsznv-dot/WatchTogether/releases/download/nettest/wt-nettest-macos.zip)** · **[Скачать для Windows](https://github.com/dmsznv-dot/WatchTogether/releases/download/nettest/wt-nettest-windows.exe)** · [Релиз nettest](https://github.com/dmsznv-dot/WatchTogether/releases/tag/nettest)
+
+[Как проверить](tools/nettest/README.md).
+
 ---
 
 <div align="center">
