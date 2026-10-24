@@ -177,7 +177,26 @@ export function App() {
       />
 
       {/* Top Header HUD Overlay */}
-      {miniPlayer.isMini && <MiniPlayerOverlay onExpand={() => void miniPlayer.exit()} />}
+      {miniPlayer.isMini && (
+        <MiniPlayerOverlay
+          isPlaying={player.isPlaying}
+          onTogglePlayPause={() => {
+            if (!room.canControlPlayback) {
+              handleUnauthorizedAction();
+              return;
+            }
+            player.togglePlayPause();
+          }}
+          onSeekRelative={(delta) => {
+            if (!room.canControlPlayback) {
+              handleUnauthorizedAction();
+              return;
+            }
+            player.seek(Math.max(0, player.positionSec + delta));
+          }}
+          onExpand={() => void miniPlayer.exit()}
+        />
+      )}
 
       <HeaderHUD
         isVisible={isHudVisible && !miniPlayer.isMini}

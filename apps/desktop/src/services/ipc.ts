@@ -165,6 +165,8 @@ export const windowApi = {
   /** Mini player: small always-on-top window in the screen corner (true) or the normal window. */
   setMini: (enabled: boolean): Promise<boolean> =>
     invokeCommand<boolean>('cmd_window_set_mini', { enabled }),
+  /** Pointer over the window, also while the app is inactive. */
+  isCursorInside: (): Promise<boolean> => invokeCommand<boolean>('cmd_window_cursor_inside'),
 
   toggleFullscreen: async (): Promise<boolean> => {
     if (hasTauri()) {

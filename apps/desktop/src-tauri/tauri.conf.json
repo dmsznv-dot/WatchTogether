@@ -31,7 +31,8 @@
         "transparent": true,
         "center": true,
         "focus": true,
-        "backgroundColor": "#00000000"
+        "backgroundColor": "#00000000",
+        "acceptFirstMouse": true
       }
     ],
     "macOSPrivateApi": true

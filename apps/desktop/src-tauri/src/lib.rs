@@ -245,8 +245,8 @@ const MINI_MARGIN: f64 = 24.0;
 /// Must match app.windows[0].minWidth / minHeight in tauri.conf.json.
 const NORMAL_MIN_SIZE: tauri::LogicalSize<f64> = tauri::LogicalSize::new(640.0, 360.0);
 
-/// Shrinks the window into a small always-on-top player in the screen corner (true),
-/// or restores its previous size and position (false). Returns whether it is mini now.
+/// Shrinks the window into a small borderless always-on-top player in the screen corner
+/// (true), or restores its frame, size and position (false). Returns whether it is mini now.
 #[tauri::command]
 async fn cmd_window_set_mini(
     window: tauri::WebviewWindow,
@@ -260,6 +260,8 @@ async fn cmd_window_set_mini(
     }
     if !enabled {
         let (position, size) = saved.take().expect("checked above");
+        // Frame first: it changes the outer size the saved bounds refer to.
+        window.set_decorations(true).map_err(e)?;
         window.set_always_on_top(false).map_err(e)?;
         window.set_visible_on_all_workspaces(false).map_err(e)?;
         window.set_min_size(Some(NORMAL_MIN_SIZE)).map_err(e)?;
@@ -277,11 +279,8 @@ async fn cmd_window_set_mini(
         window.unmaximize().map_err(e)?;
     }
     *saved = Some((window.outer_position().map_err(e)?, window.inner_size().map_err(e)?));
-    let frame = {
-        let outer = window.outer_size().map_err(e)?;
-        let inner = window.inner_size().map_err(e)?;
-        (outer.width.saturating_sub(inner.width), outer.height.saturating_sub(inner.height))
-    };
+    // Just the picture: no title bar or border; it stays resizable from its edges.
+    window.set_decorations(false).map_err(e)?;
     let monitor = match window.current_monitor().map_err(e)? {
         Some(monitor) => monitor,
         None => window.primary_monitor().map_err(e)?.ok_or("No monitor")?,
@@ -290,8 +289,8 @@ async fn cmd_window_set_mini(
     let size = MINI_SIZE.to_physical::<u32>(scale);
     let margin = (MINI_MARGIN * scale) as i32;
     let work = monitor.work_area();
-    let x = work.position.x + work.size.width as i32 - (size.width + frame.0) as i32 - margin;
-    let y = work.position.y + work.size.height as i32 - (size.height + frame.1) as i32 - margin;
+    let x = work.position.x + work.size.width as i32 - size.width as i32 - margin;
+    let y = work.position.y + work.size.height as i32 - size.height as i32 - margin;
     window.set_min_size(Some(MINI_MIN_SIZE)).map_err(e)?;
     window.set_size(size).map_err(e)?;
     window
@@ -301,6 +300,20 @@ async fn cmd_window_set_mini(
     // Stay visible when another app is in a different Space (macOS).
     window.set_visible_on_all_workspaces(true).map_err(e)?;
     Ok(true)
+}
+
+/// Whether the pointer is over the window. The page cannot tell while the app is
+/// inactive on macOS (no hover events), which the mini player relies on.
+#[tauri::command]
+fn cmd_window_cursor_inside(window: tauri::WebviewWindow) -> Result<bool, String> {
+    let e = |e: tauri::Error| e.to_string();
+    let cursor = window.cursor_position().map_err(e)?;
+    let position = window.outer_position().map_err(e)?;
+    let size = window.outer_size().map_err(e)?;
+    Ok(cursor.x >= position.x as f64
+        && cursor.y >= position.y as f64
+        && cursor.x < position.x as f64 + size.width as f64
+        && cursor.y < position.y as f64 + size.height as f64)
 }
 
 #[tauri::command]
@@ -502,6 +515,7 @@ pub fn run() {
             cmd_room_kick_participant,
             cmd_window_toggle_fullscreen,
             cmd_window_set_mini,
+            cmd_window_cursor_inside,
             cmd_dialog_open_file,
         ])
         .run(tauri::generate_context!())
