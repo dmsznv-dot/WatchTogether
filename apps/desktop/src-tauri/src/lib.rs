@@ -6,6 +6,8 @@ pub mod events;
 mod keep_awake;
 mod self_host;
 #[cfg(target_os = "windows")]
+mod gpu_windows;
+#[cfg(target_os = "windows")]
 mod video_frames;
 pub mod state;
 
@@ -361,7 +363,8 @@ async fn cmd_video_share_frames(window: tauri::WebviewWindow) -> Result<usize, S
     }
 }
 
-/// Renders the next frame into shared buffer `index`; false when there is no new frame.
+/// Renders the next frame into shared buffer `index`. `hdrPeakNits` asks for HDR frames
+/// for a monitor with that peak. Returns `{ fresh, format: "rgba8" | "rgba16f" }`.
 #[tauri::command]
 async fn cmd_player_frame_shared(
     app: tauri::AppHandle,
@@ -369,20 +372,44 @@ async fn cmd_player_frame_shared(
     width: u32,
     height: u32,
     force: bool,
-) -> Result<bool, String> {
+    hdr_peak_nits: Option<f32>,
+) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "windows")]
     {
         let frames = Arc::clone(&app.state::<Arc<video_frames::WindowsFrames>>());
-        tauri::async_runtime::spawn_blocking(move || {
-            frames.render_shared(index, width, height, force)
+        let info = tauri::async_runtime::spawn_blocking(move || {
+            frames.render_shared(index, width, height, force, hdr_peak_nits)
         })
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+        serde_json::to_value(info).map_err(|e| e.to_string())
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, index, width, height, force);
+        let _ = (app, index, width, height, force, hdr_peak_nits);
         Err("Shared video buffers are Windows-only".into())
+    }
+}
+
+/// HDR state of the monitor showing the window: `{ hdr, peakNits, renderer }`.
+/// `hdr` is true only when Windows HDR is on there and the GPU renderer can output it.
+#[tauri::command]
+async fn cmd_video_display_hdr(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let frames = Arc::clone(&window.state::<Arc<video_frames::WindowsFrames>>());
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as isize;
+        let display = gpu_windows::display_hdr(hwnd)?;
+        Ok(serde_json::json!({
+            "hdr": display.hdr && frames.supports_hdr(),
+            "peakNits": display.peak_nits,
+            "gpu": frames.supports_hdr(),
+        }))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        Ok(serde_json::json!({ "hdr": false, "peakNits": 0.0, "gpu": false }))
     }
 }
 
@@ -420,9 +447,7 @@ pub fn run() {
                 let player = Arc::new(media_engine::MpvPlayer::new_with_options(&[(
                     "vo", "libmpv",
                 )])?);
-                app.manage(Arc::new(video_frames::WindowsFrames::new(
-                    player.software_renderer()?,
-                )));
+                app.manage(Arc::new(video_frames::WindowsFrames::new(&player)?));
                 player
             };
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -453,6 +478,7 @@ pub fn run() {
             cmd_player_frame_shared,
             cmd_player_toggle_stats,
             cmd_video_share_frames,
+            cmd_video_display_hdr,
             cmd_player_open_file,
             cmd_player_play,
             cmd_player_pause,

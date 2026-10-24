@@ -1,5 +1,7 @@
 pub mod ffi;
+mod gl_frames;
 mod software;
+pub use gl_frames::{DynamicRange, GetProcAddress, GlFrameRenderer};
 pub use software::{SoftwareRenderer, MAX_HEIGHT, MAX_WIDTH};
 #[cfg(target_os = "macos")]
 mod macos;
@@ -97,6 +99,16 @@ pub struct MpvPlayer {
 }
 
 impl MpvPlayer {
+    /// Sets an mpv property at run time (e.g. `target-peak`).
+    pub fn set_property_string(&self, name: &str, value: &str) -> Result<(), MediaEngineError> {
+        let c_name = CString::new(name).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
+        let c_value = CString::new(value).map_err(|e| MediaEngineError::Internal(e.to_string()))?;
+        let res = unsafe {
+            (self.api.mpv_set_property_string)(self.handle.0, c_name.as_ptr(), c_value.as_ptr())
+        };
+        self.check_error(res, &format!("set {name}={value}"))
+    }
+
     /// Reads any mpv property as a string (e.g. `hwdec-current`, `frame-drop-count`).
     pub fn property_string(&self, name: &str) -> Option<String> {
         let name = CString::new(name).ok()?;

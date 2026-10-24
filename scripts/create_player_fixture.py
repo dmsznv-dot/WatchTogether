@@ -35,6 +35,18 @@ subprocess.run([
     "-f", "lavfi", "-i", "sine=frequency=660", "-t", "10", "-c:a", "aac",
     str(root / "dub.m4a")
 ], check=True)
+# HDR10 clip (HEVC 10-bit, PQ, BT.2020) with known luminance: three bars of 1000, 203
+# (SDR reference white) and 100 nits, black along the bottom. 10-bit limited-range PQ
+# codes: 1000 nits -> 723, 203 -> 573, 100 -> 509, black -> 64.
+subprocess.run([
+    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "color=black:s=640x360:r=30,format=yuv420p10le",
+    "-vf", "geq=lum='if(gt(Y,H*3/4),64,if(lt(X,W/3),723,if(lt(X,W*2/3),573,509)))':cb=512:cr=512",
+    "-t", "5", "-c:v", "libx265", "-pix_fmt", "yuv420p10le",
+    "-x265-params", "log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:range=limited:hdr10=1:max-cll=1000,400:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)",
+    "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-color_range", "tv",
+    str(root / "hdr10.mp4")
+], check=True)
 # 1080p60 clip for frame-rate checks of the video output paths.
 subprocess.run([
     "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",

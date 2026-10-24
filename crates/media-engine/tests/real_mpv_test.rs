@@ -235,3 +235,99 @@ fn real_decoder_adds_and_plays_an_external_audio_track() {
     assert!(player.audio_tracks().unwrap().iter().any(|t| t.id == id && t.is_selected));
     assert!(player.add_external_audio("/tmp/notes.txt", None, None).is_err());
 }
+
+/// Offscreen OpenGL context for driving the GPU frame renderer in tests (macOS: CGL).
+#[cfg(target_os = "macos")]
+mod cgl {
+    use std::ffi::{c_char, c_void};
+    #[link(name = "OpenGL", kind = "framework")]
+    extern "C" {
+        fn CGLChoosePixelFormat(attrs: *const i32, pix: *mut *mut c_void, count: *mut i32) -> i32;
+        fn CGLCreateContext(pix: *mut c_void, share: *mut c_void, ctx: *mut *mut c_void) -> i32;
+        fn CGLSetCurrentContext(ctx: *mut c_void) -> i32;
+        fn CGLDestroyPixelFormat(pix: *mut c_void) -> i32;
+    }
+    extern "C" {
+        fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
+    }
+    pub unsafe extern "C" fn get_proc(_: *mut c_void, name: *const c_char) -> *mut c_void {
+        dlsym(-2isize as *mut c_void, name) // RTLD_DEFAULT
+    }
+    /// Makes a 3.2 core context current on this thread (any renderer, software included).
+    pub fn make_current() {
+        const PROFILE: i32 = 99;
+        const CORE_3_2: i32 = 0x3200;
+        let attrs = [PROFILE, CORE_3_2, 0];
+        unsafe {
+            let (mut pix, mut n, mut ctx) = (std::ptr::null_mut(), 0, std::ptr::null_mut());
+            assert_eq!(CGLChoosePixelFormat(attrs.as_ptr(), &mut pix, &mut n), 0);
+            assert_eq!(CGLCreateContext(pix, std::ptr::null_mut(), &mut ctx), 0);
+            CGLDestroyPixelFormat(pix);
+            assert_eq!(CGLSetCurrentContext(ctx), 0);
+        }
+    }
+}
+
+fn half_to_f32(bits: u16) -> f32 {
+    let sign = if bits & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exp = ((bits >> 10) & 0x1f) as i32;
+    let frac = (bits & 0x3ff) as f32;
+    sign * match exp {
+        0 => frac / 1024.0 * 2f32.powi(-14),
+        31 => f32::INFINITY,
+        _ => (1.0 + frac / 1024.0) * 2f32.powi(exp - 15),
+    }
+}
+
+/// The GPU renderer keeps HDR video's real luminance for HDR displays (values above SDR
+/// white) and tone-maps it into the normal range for SDR displays. Uses hdr10.mp4.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires libmpv and WT_TEST_MEDIA fixture"]
+fn gpu_renderer_outputs_hdr_luminance_or_tone_maps_to_sdr() {
+    use media_engine::mpv::DynamicRange;
+    let path = std::env::var("WT_TEST_MEDIA").expect("set WT_TEST_MEDIA");
+    let hdr10 = std::path::Path::new(&path).with_file_name("hdr10.mp4");
+    let player = std::sync::Arc::new(
+        MpvPlayer::new_with_options(&[("vo", "libmpv"), ("ao", "null")]).unwrap(),
+    );
+    cgl::make_current();
+    let mut renderer = unsafe { player.gl_frame_renderer(cgl::get_proc, std::ptr::null_mut()) }.unwrap();
+    println!("GPU renderer: {}", renderer.describe());
+    player.open_file(hdr10.to_str().unwrap()).unwrap();
+    player.pause().unwrap();
+    let (w, h) = (640u32, 360u32);
+    let mut frame = vec![0u8; (w * h * 8) as usize];
+    let render = |renderer: &mut media_engine::mpv::GlFrameRenderer, frame: &mut Vec<u8>| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !renderer.has_new_frame() {
+            assert!(Instant::now() < deadline, "no frame from the GPU renderer");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // A couple of renders so the paused frame is the decoded picture, not a blank first pass.
+        for _ in 0..3 {
+            renderer.render_into(w, h, frame).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            let _ = renderer.has_new_frame();
+        }
+    };
+    let probe = |x: u32, y: u32| (y * w + x) as usize;
+    let (left, mid, right, bottom) = (probe(w / 6, h / 3), probe(w / 2, h / 3), probe(w * 5 / 6, h / 3), probe(w / 2, h - 5));
+
+    render(&mut renderer, &mut frame);
+    let sdr = |i: usize| frame[i * 4];
+    let (sl, sm, sr, sb) = (sdr(left), sdr(mid), sdr(right), sdr(bottom));
+    println!("SDR (8-bit red): 1000 nits {sl}, 203 nits {sm}, 100 nits {sr}, black {sb}");
+    assert!(sl >= sm && sm > sr && sr > sb, "SDR tone mapping keeps the bars in order");
+    assert!(sb < 20, "bottom of the picture comes out at the bottom (row order)");
+
+    renderer.set_dynamic_range(DynamicRange::Hdr { peak_nits: 1000.0 }).unwrap();
+    render(&mut renderer, &mut frame);
+    let hdr = |i: usize| half_to_f32(u16::from_le_bytes([frame[i * 8], frame[i * 8 + 1]]));
+    let (hl, hm, hr, hb) = (hdr(left), hdr(mid), hdr(right), hdr(bottom));
+    println!("HDR (linear, 1.0 = 203 nits): 1000 nits {hl:.2}, 203 nits {hm:.2}, 100 nits {hr:.2}, black {hb:.3}");
+    assert!((hl - 1000.0 / 203.0).abs() < 0.8, "1000-nit bar should be ~4.9x SDR white, got {hl}");
+    assert!((hm - 1.0).abs() < 0.15, "203-nit bar should be ~SDR white, got {hm}");
+    assert!((hr - 100.0 / 203.0).abs() < 0.1, "100-nit bar should be ~0.49, got {hr}");
+    assert!(hb < 0.02, "black stays black, got {hb}");
+}

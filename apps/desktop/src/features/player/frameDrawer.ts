@@ -112,3 +112,112 @@ export function frameSize(
     height: Math.max(16, Math.round(h * scale)),
   };
 }
+
+// Minimal WebGPU surface used here (no @webgpu/types dependency).
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type Gpu = any;
+const TEXTURE_COPY_DST = 0x02;
+const TEXTURE_BINDING = 0x04;
+
+const HDR_SHADER = `
+struct Out { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> Out {
+  // One triangle covering the canvas; row 0 of the frame is the top of the picture.
+  var p = array<vec2f, 3>(vec2f(-1.0, -3.0), vec2f(-1.0, 1.0), vec2f(3.0, 1.0));
+  var o: Out;
+  o.pos = vec4f(p[i], 0.0, 1.0);
+  o.uv = vec2f((p[i].x + 1.0) * 0.5, (1.0 - p[i].y) * 0.5);
+  return o;
+}
+@group(0) @binding(0) var frame: texture_2d<f32>;
+@group(0) @binding(1) var smp: sampler;
+// The canvas is extended sRGB: sRGB-encoded values, 1.0 = SDR white, brighter above.
+fn encode(c: f32) -> f32 {
+  let a = abs(c);
+  let e = select(12.92 * a, 1.055 * pow(a, 1.0 / 2.4) - 0.055, a > 0.0031308);
+  return sign(c) * e;
+}
+@fragment fn fs(in: Out) -> @location(0) vec4f {
+  let linear = textureSample(frame, smp, in.uv).rgb;
+  return vec4f(encode(linear.r), encode(linear.g), encode(linear.b), 1.0);
+}`;
+
+/**
+ * HDR output for frames in linear-light RGBA16F (1.0 = SDR white): a WebGPU canvas in
+ * `rgba16float` with extended tone mapping shows values above 1.0 brighter than white
+ * on an HDR monitor (Chromium 129+, i.e. current WebView2). Null when unavailable.
+ */
+export async function createWebGpuHdrDrawer(canvas: HTMLCanvasElement): Promise<FrameDrawer | null> {
+  const gpu: Gpu = (navigator as any).gpu;
+  if (!gpu) return null;
+  try {
+    const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
+    if (!adapter) return null;
+    const device = await adapter.requestDevice();
+    const context: Gpu = canvas.getContext('webgpu' as any);
+    if (!context) return null;
+    const configure = () =>
+      context.configure({
+        device,
+        format: 'rgba16float',
+        colorSpace: 'srgb',
+        toneMapping: { mode: 'extended' },
+        alphaMode: 'opaque',
+      });
+    configure();
+    const module = device.createShaderModule({ code: HDR_SHADER });
+    const pipeline = device.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs' },
+      fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+    let texture: Gpu = null;
+    let bindGroup: Gpu = null;
+    let size = { width: 0, height: 0 };
+    return {
+      draw(pixels, width, height) {
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+          configure();
+        }
+        if (!texture || size.width !== width || size.height !== height) {
+          texture?.destroy();
+          texture = device.createTexture({
+            size: [width, height],
+            format: 'rgba16float',
+            usage: TEXTURE_BINDING | TEXTURE_COPY_DST,
+          });
+          bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: texture.createView() },
+              { binding: 1, resource: sampler },
+            ],
+          });
+          size = { width, height };
+        }
+        device.queue.writeTexture(
+          { texture },
+          pixels.subarray(0, width * height * 8),
+          { bytesPerRow: width * 8 },
+          [width, height],
+        );
+        const encoder = device.createCommandEncoder();
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
+        });
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.draw(3);
+        pass.end();
+        device.queue.submit([encoder.finish()]);
+      },
+    };
+  } catch (err) {
+    console.warn('HDR video output unavailable:', err);
+    return null;
+  }
+}

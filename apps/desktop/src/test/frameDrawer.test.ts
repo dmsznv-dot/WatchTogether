@@ -20,3 +20,17 @@ describe('Windows video frame size', () => {
     expect(frameSize(0, 0, 1)).toEqual({ width: 16, height: 16 });
   });
 });
+
+import { hdrPeakFor } from '../features/player/WindowsVideo';
+
+describe('Windows HDR mode choice', () => {
+  it('uses HDR only when the monitor is in HDR mode and HDR output works', () => {
+    expect(hdrPeakFor({ hdr: true, peakNits: 600 }, true)).toBe(600);
+    expect(hdrPeakFor({ hdr: true, peakNits: 600 }, false)).toBeUndefined();
+    expect(hdrPeakFor({ hdr: false, peakNits: 600 }, true)).toBeUndefined();
+    expect(hdrPeakFor(null, true)).toBeUndefined();
+  });
+  it('assumes a typical peak when the monitor reports none', () => {
+    expect(hdrPeakFor({ hdr: true, peakNits: 0 }, true)).toBe(1000);
+  });
+});

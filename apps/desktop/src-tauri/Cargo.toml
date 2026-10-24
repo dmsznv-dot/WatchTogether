@@ -33,6 +33,15 @@ tauri-plugin-process = "2"
 # Same versions Tauri's WebView2 backend uses; needed for shared video buffers.
 webview2-com = "0.39"
 windows-core = "0.62"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_OpenGL",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [build-dependencies]
 tauri-build = { version = "2", default-features = false , features = [] }
