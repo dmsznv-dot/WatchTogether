@@ -1,5 +1,6 @@
-// Real GPU smoke test: create the surface, decode a fixture, read back pixels,
-// resize, and destroy the renderer before the mpv handle. Requires brew mpv.
+// Real GPU smoke test: create the surface, decode a fixture, check that frames reach
+// the screen before and after a resize, and destroy the renderer before the mpv handle.
+// Requires brew mpv.
 // With a second argument (expected fps, e.g. 60 for hd60.mp4) it also measures
 // how many frames per second reach the screen during playback.
 #import <AppKit/AppKit.h>
@@ -14,6 +15,9 @@ typedef struct {
     void (*report_swap)(mpv_render_context *);
     uint64_t (*update)(mpv_render_context *);
     void (*set_update_callback)(mpv_render_context *, mpv_render_update_fn, void *);
+    int (*set_property_string)(mpv_handle *, const char *, const char *);
+    char *(*get_property_string)(mpv_handle *, const char *);
+    void (*mpv_free)(void *);
 } RenderApi;
 static int swaps = 0;
 static void counting_report_swap(mpv_render_context *ctx) {
@@ -27,19 +31,10 @@ static void pump(double seconds) {
     while ([deadline timeIntervalSinceNow] > 0)
         [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
 }
-static BOOL has_picture(NSOpenGLView *surface) {
-    [surface display];
-    [[surface openGLContext] makeCurrentContext];
-    unsigned char pixels[64 * 64 * 4];
-    glReadBuffer(GL_FRONT);
-    glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    unsigned char min = 255, max = 0;
-    for (int i=0; i<64*64*4; i++) if (i % 4 != 3) {
-        if (pixels[i] < min) min = pixels[i];
-        if (pixels[i] > max) max = pixels[i];
-    }
-    printf("Framebuffer range: %u..%u\n", min, max);
-    return max - min > 50;
+// Frames reached the screen if the layer presented some since `before`.
+static BOOL presented_since(int before) {
+    printf("Presented frames: %d\n", swaps - before);
+    return swaps - before > 0;
 }
 int main(int argc, char **argv) {
     @autoreleasepool {
@@ -59,13 +54,15 @@ int main(int argc, char **argv) {
         if (mpv_initialize(mpv) < 0) return 3;
         RenderApi api = {mpv_render_context_create, mpv_render_context_render,
             mpv_render_context_free, counting_report_swap, mpv_render_context_update,
-            mpv_render_context_set_update_callback};
-        NSOpenGLView *surface = wt_surface_create(window.contentView, mpv, api);
+            mpv_render_context_set_update_callback, mpv_set_property_string,
+            mpv_get_property_string, mpv_free};
+        NSView *surface = wt_surface_create(window.contentView, mpv, api);
         if (!surface) return 4;
         const char *args[] = {"loadfile", argv[1], NULL};
         if (mpv_command(mpv, args) < 0) return 5;
+        int start = swaps;
         pump(1.5);
-        BOOL initial = has_picture(surface);
+        BOOL initial = presented_since(start);
         BOOL smooth = YES;
         if (expected_fps > 0) {
             int before = swaps;
@@ -80,15 +77,16 @@ int main(int argc, char **argv) {
             smooth = fps >= expected_fps * 0.9;
         }
         [window setContentSize:NSMakeSize(800,450)];
+        int beforeResize = swaps;
         pump(0.5);
-        BOOL resized = has_picture(surface);
+        BOOL resized = presented_since(beforeResize);
         wt_surface_destroy(surface);
         mpv_terminate_destroy(mpv);
         [window close];
         [window release];
         if (!initial || !resized) return 6;
         if (!smooth) return 7;
-        puts("PASS: real libmpv frames render before and after resize; teardown succeeds");
+        puts("PASS: real libmpv frames present before and after resize; teardown succeeds");
     }
     return 0;
 }

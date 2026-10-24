@@ -7,6 +7,7 @@ fn main() {
             .compile("watch_together_surface");
         println!("cargo:rustc-link-lib=framework=AppKit");
         println!("cargo:rustc-link-lib=framework=OpenGL");
+        println!("cargo:rustc-link-lib=framework=QuartzCore");
         println!("cargo:rerun-if-changed=src/mpv/macos_surface.m");
     }
 }

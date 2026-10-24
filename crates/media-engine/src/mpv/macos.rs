@@ -11,6 +11,9 @@ struct RenderApi {
     report_swap: *const c_void,
     update: *const c_void,
     set_update_callback: *const c_void,
+    set_property_string: *const c_void,
+    get_property_string: *const c_void,
+    mpv_free: *const c_void,
 }
 extern "C" {
     fn wt_surface_create(parent: *mut c_void, handle: *mut c_void, api: RenderApi) -> *mut c_void;
@@ -35,6 +38,10 @@ impl MpvPlayer {
             set_update_callback: self
                 .api
                 .render_symbol(b"mpv_render_context_set_update_callback\0")?,
+            // HDR switching (target-trc/peak) and detecting HDR video (video-params/gamma).
+            set_property_string: self.api.mpv_set_property_string as *const c_void,
+            get_property_string: self.api.mpv_get_property_string as *const c_void,
+            mpv_free: self.api.mpv_free as *const c_void,
         };
         let surface = wt_surface_create(parent, self.handle.0.cast(), api);
         if surface.is_null() {
