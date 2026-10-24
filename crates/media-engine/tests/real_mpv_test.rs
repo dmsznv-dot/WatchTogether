@@ -298,23 +298,33 @@ fn gpu_renderer_outputs_hdr_luminance_or_tone_maps_to_sdr() {
     player.pause().unwrap();
     let (w, h) = (640u32, 360u32);
     let mut frame = vec![0u8; (w * h * 8) as usize];
-    let render = |renderer: &mut media_engine::mpv::GlFrameRenderer, frame: &mut Vec<u8>| {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !renderer.has_new_frame() {
-            assert!(Instant::now() < deadline, "no frame from the GPU renderer");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        // A couple of renders so the paused frame is the decoded picture, not a blank first pass.
-        for _ in 0..3 {
-            renderer.render_into(w, h, frame).unwrap();
-            std::thread::sleep(Duration::from_millis(50));
-            let _ = renderer.has_new_frame();
-        }
-    };
     let probe = |x: u32, y: u32| (y * w + x) as usize;
+    // Renders until the decoded picture is there (the 203-nit bar is not black):
+    // slow machines show blank frames first.
+    let render = |renderer: &mut media_engine::mpv::GlFrameRenderer, frame: &mut Vec<u8>| -> bool {
+        let mid = probe(w / 2, h / 3);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            let _ = renderer.has_new_frame();
+            renderer.render_into(w, h, frame).unwrap();
+            let bpp = renderer.dynamic_range().bytes_per_pixel();
+            // Colour channels only: alpha is opaque even in a blank frame.
+            if frame[mid * bpp..mid * bpp + bpp * 3 / 4].iter().any(|&b| b != 0) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    };
     let (left, mid, right, bottom) = (probe(w / 6, h / 3), probe(w / 2, h / 3), probe(w * 5 / 6, h / 3), probe(w / 2, h - 5));
 
-    render(&mut renderer, &mut frame);
+    if !render(&mut renderer, &mut frame) {
+        // CI VMs only have Apple's software OpenGL, which renders this path black; the
+        // app does not use it on macOS, and Windows VMs fall back to the CPU renderer.
+        assert!(renderer.describe().contains("Software"), "GPU renderer shows no picture");
+        println!("note: no picture from {}; skipping the HDR checks", renderer.describe());
+        return;
+    }
     let sdr = |i: usize| frame[i * 4];
     let (sl, sm, sr, sb) = (sdr(left), sdr(mid), sdr(right), sdr(bottom));
     println!("SDR (8-bit red): 1000 nits {sl}, 203 nits {sm}, 100 nits {sr}, black {sb}");
@@ -322,7 +332,7 @@ fn gpu_renderer_outputs_hdr_luminance_or_tone_maps_to_sdr() {
     assert!(sb < 20, "bottom of the picture comes out at the bottom (row order)");
 
     renderer.set_dynamic_range(DynamicRange::Hdr { peak_nits: 1000.0 }).unwrap();
-    render(&mut renderer, &mut frame);
+    assert!(render(&mut renderer, &mut frame), "no HDR picture");
     let hdr = |i: usize| half_to_f32(u16::from_le_bytes([frame[i * 8], frame[i * 8 + 1]]));
     let (hl, hm, hr, hb) = (hdr(left), hdr(mid), hdr(right), hdr(bottom));
     println!("HDR (linear, 1.0 = 203 nits): 1000 nits {hl:.2}, 203 nits {hm:.2}, 100 nits {hr:.2}, black {hb:.3}");
