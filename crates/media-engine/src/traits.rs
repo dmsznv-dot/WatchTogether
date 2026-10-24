@@ -69,6 +69,15 @@ pub trait MediaPlayer: Send + Sync {
         lang: Option<&str>,
     ) -> Result<i64, MediaEngineError>;
 
+    /// Loads an external audio file (e.g. a dub) as an extra audio track and selects it.
+    /// See [`crate::track::EXTERNAL_AUDIO_EXTENSIONS`].
+    fn add_external_audio(
+        &self,
+        path: &str,
+        title: Option<&str>,
+        lang: Option<&str>,
+    ) -> Result<i64, MediaEngineError>;
+
     /// Retrieves current local player state snapshot.
     fn get_state(&self) -> Result<PlayerState, MediaEngineError>;
 

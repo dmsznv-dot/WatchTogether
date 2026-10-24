@@ -146,6 +146,7 @@ export function App() {
         hideCursor={player.isPlaying && !isHudVisible}
         onOpenFile={player.openFile}
         onLoadSubtitle={tracks.loadExternalSubtitle}
+        onLoadAudio={tracks.loadExternalAudio}
         onTogglePlayPause={() => {
           if (!room.canControlPlayback) {
             handleUnauthorizedAction();
@@ -207,6 +208,7 @@ export function App() {
         onSelectAudio={tracks.selectAudio}
         onSelectSubtitle={tracks.selectSubtitle}
         onLoadExternalSubtitle={tracks.loadExternalSubtitle}
+        onLoadExternalAudio={tracks.loadExternalAudio}
         onToggleFullscreen={handleToggleFullscreen}
         onUnauthorizedAction={handleUnauthorizedAction}
         bindHover={bindHover}

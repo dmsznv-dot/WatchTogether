@@ -167,6 +167,31 @@ fn test_headless_player_subtitle_tracks() {
 }
 
 #[test]
+fn test_headless_external_audio_track_is_added_and_selected() {
+    let player = HeadlessPlayer::new();
+    player.open_file("/movies/film.mkv").unwrap();
+    let before = player.audio_tracks().unwrap();
+    let id = player.add_external_audio("/dubs/Film.RUS.ac3", None, Some("rus")).unwrap();
+    let after = player.audio_tracks().unwrap();
+    assert_eq!(after.len(), before.len() + 1);
+    let added = after.iter().find(|t| t.id == id).unwrap();
+    assert!(added.is_selected && added.is_external);
+    assert_eq!(added.track_type, TrackType::Audio);
+    assert_eq!(added.title.as_deref(), Some("Film.RUS.ac3"));
+    assert_eq!(added.lang.as_deref(), Some("rus"));
+    assert_eq!(after.iter().filter(|t| t.is_selected).count(), 1);
+    // The embedded tracks stay selectable.
+    player.select_audio(before[0].id).unwrap();
+    assert!(!player.audio_tracks().unwrap().iter().find(|t| t.id == id).unwrap().is_selected);
+    for bad in ["/dubs/notes.txt", "/dubs/movie.mkv", "/dubs/subs.srt"] {
+        assert!(matches!(
+            player.add_external_audio(bad, None, None),
+            Err(MediaEngineError::UnsupportedAudioExtension(_))
+        ));
+    }
+}
+
+#[test]
 fn test_video_dimensions_aspect_ratio_and_fitting() {
     // 16:9
     let v16_9 = VideoDimensions::new(1920, 1080);

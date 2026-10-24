@@ -302,6 +302,23 @@ export class MockIpcBackend {
       case 'cmd_player_toggle_stats':
         return undefined as unknown as T;
 
+      case 'cmd_player_load_external_audio': {
+        const path = (args.path as string) || 'dub.mp3';
+        const filename = path.split(/[\\/]/).pop() || 'External Audio';
+        const newTrack: MediaTrack = {
+          id: Math.max(0, ...this.audioTracks.map((t) => t.id)) + 1,
+          track_type: 'audio',
+          title: filename,
+          lang: null,
+          is_selected: true,
+          is_external: true,
+          codec: filename.split('.').pop()?.toLowerCase() ?? null,
+        };
+        this.audioTracks = [...this.audioTracks.map((t) => ({ ...t, is_selected: false })), newTrack];
+        this.emitTracksChange();
+        return newTrack as unknown as T;
+      }
+
       case 'cmd_player_load_external_subtitle':
       case 'cmd_player_add_subtitle':
       case 'player_add_subtitle': {

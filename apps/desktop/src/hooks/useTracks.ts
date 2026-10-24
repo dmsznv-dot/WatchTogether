@@ -91,12 +91,32 @@ export function useTracks() {
     []
   );
 
+  const loadExternalAudio = useCallback(
+    async (path: string): Promise<MediaTrack | null> => {
+      try {
+        ++revision.current;
+        const track = await playerApi.loadExternalAudio(path);
+        ++revision.current;
+        setAudioTracks((prev) => [
+          ...prev.filter((t) => t.id !== track.id).map((t) => ({ ...t, is_selected: false })),
+          track,
+        ]);
+        return track;
+      } catch (err) {
+        console.error('Failed to load external audio:', err);
+        return null;
+      }
+    },
+    []
+  );
+
   return {
     audioTracks,
     subtitleTracks,
     selectAudio,
     selectSubtitle,
     loadExternalSubtitle,
+    loadExternalAudio,
     refreshTracks,
   };
 }

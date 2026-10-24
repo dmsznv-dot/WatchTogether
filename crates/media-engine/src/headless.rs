@@ -315,6 +315,35 @@ impl MediaPlayer for HeadlessPlayer {
         Ok(())
     }
 
+    fn add_external_audio(
+        &self,
+        path: &str,
+        title: Option<&str>,
+        lang: Option<&str>,
+    ) -> Result<i64, MediaEngineError> {
+        let ext = crate::track::external_audio_extension(path)?;
+        let mut state = self.inner.write().unwrap();
+        for t in &mut state.audio_tracks {
+            t.is_selected = false;
+        }
+        let new_id = state.audio_tracks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+        let file_name = Path::new(path).file_name().and_then(|n| n.to_str());
+        state.audio_tracks.push(MediaTrack {
+            id: new_id,
+            track_type: TrackType::Audio,
+            title: title.or(file_name).map(|s| s.to_string()),
+            lang: lang.map(|s| s.to_string()),
+            is_selected: true,
+            is_external: true,
+            codec: Some(ext),
+        });
+        let all_tracks = state.audio_tracks.clone();
+        drop(state);
+
+        let _ = self.event_tx.send(PlayerEvent::TracksChange { tracks: all_tracks });
+        Ok(new_id)
+    }
+
     fn add_external_subtitle(
         &self,
         path: &str,

@@ -57,6 +57,20 @@ pub async fn cmd_player_load_external_subtitle(
     Ok(track)
 }
 
+/// Loads an external audio file (e.g. a dub) as an extra local audio track and selects it.
+pub async fn cmd_player_load_external_audio(
+    state: &AppState,
+    path: String,
+) -> Result<MediaTrack, AppError> {
+    let track_id = state.player.add_external_audio(&path, None, None)?;
+    state
+        .player
+        .audio_tracks()?
+        .into_iter()
+        .find(|t| t.id == track_id)
+        .ok_or(AppError::Internal("Failed to find added audio track".into()))
+}
+
 pub async fn cmd_player_add_subtitle(state: &AppState, path: String) -> Result<(), AppError> {
     cmd_player_load_external_subtitle(state, path).await.map(|_| ())
 }

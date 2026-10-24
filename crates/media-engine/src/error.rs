@@ -30,6 +30,9 @@ pub enum MediaEngineError {
     #[error("Unsupported subtitle file extension '{0}', expected .srt or .ass")]
     UnsupportedSubtitleExtension(String),
 
+    #[error("Unsupported audio file extension '{0}', expected an audio file such as .mp3, .m4a, .aac, .ac3, .flac, .wav or .mka")]
+    UnsupportedAudioExtension(String),
+
     #[error("Invalid playback speed: {0} (must be between 0.5 and 2.0)")]
     InvalidSpeed(f32),
 

@@ -141,6 +141,16 @@ async fn cmd_player_load_external_subtitle(
 }
 
 #[tauri::command]
+async fn cmd_player_load_external_audio(
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<MediaTrack, String> {
+    commands::cmd_player_load_external_audio(&state, path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn cmd_player_add_subtitle(
     state: tauri::State<'_, Arc<AppState>>,
     path: String,
@@ -383,6 +393,7 @@ pub fn run() {
             cmd_player_select_subtitle,
             cmd_player_load_external_subtitle,
             cmd_player_add_subtitle,
+            cmd_player_load_external_audio,
             cmd_room_create,
             cmd_room_join,
             cmd_room_leave,

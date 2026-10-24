@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Create a small, real MKV with two audio tracks and a Cyrillic SRT sidecar,
-plus a 1080p60 clip (hd60.mp4) for frame-rate checks."""
+an external audio file (dub.m4a) and a 1080p60 clip (hd60.mp4) for frame-rate checks."""
 from pathlib import Path
 import subprocess
 import sys
@@ -28,6 +28,12 @@ subprocess.run([
     "-t", "10", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s",
     "-c:v", "libx264", "-c:a", "aac", "-c:s", "ass",
     "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=rus", str(video)
+], check=True)
+# Separate audio file (e.g. a dub) for external audio track checks.
+subprocess.run([
+    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=660", "-t", "10", "-c:a", "aac",
+    str(root / "dub.m4a")
 ], check=True)
 # 1080p60 clip for frame-rate checks of the video output paths.
 subprocess.run([

@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/Button';
 import { PlayPauseRipple } from './PlayPauseRipple';
 import { hasTauri } from '../../services/ipc';
 import { cn } from '../../utils/cn';
+import { mediaFileKind } from '../../utils/mediaFiles';
 import { WindowsVideo, usesWindowsCanvas } from './WindowsVideo';
 
 export interface VideoCanvasProps {
@@ -13,6 +14,7 @@ export interface VideoCanvasProps {
   hideCursor?: boolean;
   onOpenFile: (path: string) => void;
   onLoadSubtitle?: (path: string) => void;
+  onLoadAudio?: (path: string) => void;
   onTogglePlayPause: () => void;
   onToggleFullscreen: () => void;
   onSelectFileClick: () => void;
@@ -25,11 +27,18 @@ export function VideoCanvas({
   hideCursor = false,
   onOpenFile,
   onLoadSubtitle,
+  onLoadAudio,
   onTogglePlayPause,
   onToggleFullscreen,
   onSelectFileClick,
 }: VideoCanvasProps) {
   const native = hasTauri();
+  const handleDroppedPath = useCallback((path: string) => {
+    const kind = mediaFileKind(path);
+    if (kind === 'video') onOpenFile(path);
+    else if (kind === 'subtitle') onLoadSubtitle?.(path);
+    else if (kind === 'audio') onLoadAudio?.(path);
+  }, [onOpenFile, onLoadSubtitle, onLoadAudio]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [rippleType, setRippleType] = useState<'play' | 'pause' | null>(null);
   const clickTimerRef = useRef<number | null>(null);
@@ -45,14 +54,13 @@ export function VideoCanvas({
         if (payload.type === 'drop') {
           const path = payload.paths[0];
           if (!path) return;
-          if (/\.(srt|ass)$/i.test(path)) onLoadSubtitle?.(path);
-          else if (/\.(mp4|mov|mkv)$/i.test(path)) onOpenFile(path);
+          handleDroppedPath(path);
         }
       })
     ).then((fn) => { if (disposed) fn(); else unlisten = fn; })
       .catch((err) => console.error('Native drag and drop failed:', err));
     return () => { disposed = true; unlisten?.(); };
-  }, [native, onOpenFile, onLoadSubtitle]);
+  }, [native, handleDroppedPath]);
 
   useEffect(() => () => {
     if (clickTimerRef.current !== null) window.clearTimeout(clickTimerRef.current);
@@ -98,17 +106,8 @@ export function VideoCanvas({
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
-      const name = file.name.toLowerCase();
       // On web/mock, use name or file.name; in Tauri with drag-drop, path is available
-      const filePath = (file as any).path || file.name;
-
-      if (name.endsWith('.mp4') || name.endsWith('.mov') || name.endsWith('.mkv')) {
-        onOpenFile(filePath);
-      } else if (name.endsWith('.srt') || name.endsWith('.ass')) {
-        if (onLoadSubtitle) {
-          onLoadSubtitle(filePath);
-        }
-      }
+      handleDroppedPath((file as any).path || file.name);
     }
   };
 
@@ -200,7 +199,7 @@ export function VideoCanvas({
           <UploadCloud className="w-16 h-16 text-indigo-300 mb-4 animate-bounce" />
           <h2 className="text-xl font-bold text-white mb-1">Drop Media File Here</h2>
           <p className="text-sm text-indigo-200">
-            Supports .mp4, .mov, .mkv video and .srt, .ass subtitle files
+            Supports .mp4, .mov, .mkv video, .srt, .ass subtitles and audio tracks (.mp3, .m4a, .ac3, .flac, .mka…)
           </p>
         </div>
       )}

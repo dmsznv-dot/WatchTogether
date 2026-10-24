@@ -51,3 +51,23 @@ impl MediaTrack {
         }
     }
 }
+
+/// Audio files that can be added next to a video as an extra (external) track.
+pub const EXTERNAL_AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "m4a", "aac", "ac3", "eac3", "dts", "thd", "flac", "wav", "ogg", "oga", "opus", "mka",
+    "wma", "mp2",
+];
+
+/// Lower-case extension of `path` if it is a supported external audio file.
+pub fn external_audio_extension(path: &str) -> Result<String, crate::MediaEngineError> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if EXTERNAL_AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+        Ok(ext)
+    } else {
+        Err(crate::MediaEngineError::UnsupportedAudioExtension(ext))
+    }
+}

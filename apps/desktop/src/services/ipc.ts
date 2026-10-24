@@ -14,6 +14,7 @@ import {
   RoomUpdatePayload,
 } from '../types/room';
 import { mockBackend } from './mockBackend';
+import { AUDIO_EXTENSIONS, MediaFileKind, SUBTITLE_EXTENSIONS, VIDEO_EXTENSIONS } from '../utils/mediaFiles';
 
 export const hasTauri = (): boolean => {
   return (
@@ -92,6 +93,9 @@ export const playerApi = {
   loadExternalSubtitle: (path: string): Promise<MediaTrack> =>
     invokeCommand<MediaTrack>('cmd_player_load_external_subtitle', { path }),
 
+  loadExternalAudio: (path: string): Promise<MediaTrack> =>
+    invokeCommand<MediaTrack>('cmd_player_load_external_audio', { path }),
+
   addSubtitle: (path: string): Promise<void> =>
     invokeCommand<void>('cmd_player_add_subtitle', { path }),
 
@@ -168,16 +172,16 @@ export const windowApi = {
     }
   },
 
-  openFileDialog: async (kind: 'video' | 'subtitle' = 'video'): Promise<string | null> => {
+  openFileDialog: async (kind: MediaFileKind = 'video'): Promise<string | null> => {
     if (hasTauri()) {
       try {
         const { open } = await import('@tauri-apps/plugin-dialog');
-        const selected = await open({
-          multiple: false,
-          filters: kind === 'subtitle'
-            ? [{ name: 'Subtitles', extensions: ['srt', 'ass'] }]
-            : [{ name: 'Video Files', extensions: ['mp4', 'mov', 'mkv'] }],
-        });
+        const filters = {
+          video: [{ name: 'Video Files', extensions: VIDEO_EXTENSIONS }],
+          subtitle: [{ name: 'Subtitles', extensions: SUBTITLE_EXTENSIONS }],
+          audio: [{ name: 'Audio Files', extensions: AUDIO_EXTENSIONS }],
+        };
+        const selected = await open({ multiple: false, filters: filters[kind] });
         if (typeof selected === 'string') return selected;
         return null;
       } catch {

@@ -41,6 +41,7 @@ export interface ControlsHUDProps {
   onSelectAudio: (trackId: number) => void;
   onSelectSubtitle: (trackId: number) => void;
   onLoadExternalSubtitle: (path: string) => void;
+  onLoadExternalAudio?: (path: string) => void;
   onToggleFullscreen: () => void;
   onUnauthorizedAction?: () => void;
   bindHover?: {
@@ -74,6 +75,7 @@ export function ControlsHUD({
   onSelectAudio,
   onSelectSubtitle,
   onLoadExternalSubtitle,
+  onLoadExternalAudio,
   onToggleFullscreen,
   onUnauthorizedAction,
   bindHover,
@@ -199,6 +201,7 @@ export function ControlsHUD({
               onSelectAudio={onSelectAudio}
               onSelectSubtitle={onSelectSubtitle}
               onLoadExternalSubtitle={onLoadExternalSubtitle}
+              onLoadExternalAudio={onLoadExternalAudio}
             />
 
             {/* Local Unsynchronized Volume */}

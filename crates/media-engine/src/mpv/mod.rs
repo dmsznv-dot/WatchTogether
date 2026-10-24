@@ -549,6 +549,45 @@ impl MediaPlayer for MpvPlayer {
         }
     }
 
+    fn add_external_audio(
+        &self,
+        path: &str,
+        title: Option<&str>,
+        lang: Option<&str>,
+    ) -> Result<i64, MediaEngineError> {
+        crate::track::external_audio_extension(path)?;
+        let internal = |e: std::ffi::NulError| MediaEngineError::Internal(e.to_string());
+        let cmd = CString::new("audio-add").map_err(internal)?;
+        let arg_path = CString::new(path).map_err(internal)?;
+        let arg_flags = CString::new("select").map_err(internal)?;
+        // Without a title mpv shows the file name, which is what the user picked.
+        let arg_title = CString::new(title.unwrap_or("")).map_err(internal)?;
+        let arg_lang = lang.and_then(|l| CString::new(l).ok());
+
+        let mut args: Vec<*const c_char> =
+            vec![cmd.as_ptr(), arg_path.as_ptr(), arg_flags.as_ptr()];
+        args.push(arg_title.as_ptr());
+        if let Some(ref l) = arg_lang {
+            args.push(l.as_ptr());
+        }
+        args.push(std::ptr::null());
+
+        let res = unsafe { (self.api.mpv_command)(self.handle.0, args.as_mut_ptr()) };
+        self.check_error(res, &format!("audio-add {}", path))?;
+
+        let aid_prop = CString::new("aid").unwrap();
+        let mut aid: i64 = 1;
+        unsafe {
+            (self.api.mpv_get_property)(
+                self.handle.0,
+                aid_prop.as_ptr(),
+                MPV_FORMAT_INT64,
+                &mut aid as *mut _ as *mut c_void,
+            )
+        };
+        Ok(aid)
+    }
+
     fn add_external_subtitle(
         &self,
         path: &str,

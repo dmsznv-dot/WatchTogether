@@ -201,3 +201,31 @@ fn stats_overlay_is_drawn_into_rendered_frames() {
     }
     panic!("stats overlay never appears in the rendered frame");
 }
+
+/// An audio file next to the movie (e.g. a dub) becomes an extra, selected audio track.
+/// Uses dub.m4a, generated next to WT_TEST_MEDIA by scripts/create_player_fixture.py.
+#[test]
+#[ignore = "requires libmpv and WT_TEST_MEDIA fixture"]
+fn real_decoder_adds_and_plays_an_external_audio_track() {
+    let path = std::env::var("WT_TEST_MEDIA").expect("set WT_TEST_MEDIA");
+    let dub = std::path::Path::new(&path).with_file_name("dub.m4a");
+    let player = MpvPlayer::new_with_options(&[("vo", "null"), ("ao", "null")]).unwrap();
+    player.open_file(&path).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while player.audio_tracks().unwrap().len() < 2 {
+        assert!(Instant::now() < deadline, "embedded audio tracks never appear");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let embedded = player.audio_tracks().unwrap().len();
+    let id = player.add_external_audio(dub.to_str().unwrap(), None, None).unwrap();
+    let tracks = player.audio_tracks().unwrap();
+    assert_eq!(tracks.len(), embedded + 1);
+    let added = tracks.iter().find(|t| t.id == id).expect("added track listed");
+    assert!(added.is_selected && added.is_external);
+    assert_eq!(player.property_string("aid").as_deref(), Some(id.to_string().as_str()));
+    // Switching back to an embedded track and to the dub again both work.
+    player.select_audio(1).unwrap();
+    player.select_audio(id).unwrap();
+    assert!(player.audio_tracks().unwrap().iter().any(|t| t.id == id && t.is_selected));
+    assert!(player.add_external_audio("/tmp/notes.txt", None, None).is_err());
+}

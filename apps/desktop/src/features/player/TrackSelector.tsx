@@ -10,6 +10,7 @@ export interface TrackSelectorProps {
   onSelectAudio: (trackId: number) => void;
   onSelectSubtitle: (trackId: number) => void;
   onLoadExternalSubtitle: (path: string) => void;
+  onLoadExternalAudio?: (path: string) => void;
 }
 
 export function TrackSelector({
@@ -18,6 +19,7 @@ export function TrackSelector({
   onSelectAudio,
   onSelectSubtitle,
   onLoadExternalSubtitle,
+  onLoadExternalAudio,
 }: TrackSelectorProps) {
   const [activeMenu, setActiveMenu] = useState<'audio' | 'subtitle' | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,6 +42,14 @@ export function TrackSelector({
     const selected = await windowApi.openFileDialog('subtitle');
     if (selected) {
       onLoadExternalSubtitle(selected);
+      setActiveMenu(null);
+    }
+  };
+
+  const handleOpenExternalAudio = async () => {
+    const selected = await windowApi.openFileDialog('audio');
+    if (selected) {
+      onLoadExternalAudio?.(selected);
       setActiveMenu(null);
     }
   };
@@ -124,11 +134,31 @@ export function TrackSelector({
                           {track.codec}
                         </span>
                       )}
+                      {track.is_external && (
+                        <span className="ml-1.5 text-[9px] uppercase tracking-wider text-amber-300 bg-amber-950/80 px-1 py-0.2 rounded border border-amber-800/40">
+                          External
+                        </span>
+                      )}
                     </div>
                     {track.is_selected && <Check className="w-3.5 h-3.5 shrink-0" />}
                   </button>
                 );
               })
+            )}
+
+            {onLoadExternalAudio && (
+              <>
+                <div className="my-1 border-t border-zinc-700/50" />
+                {/* Add External Audio Option (e.g. a dub as a separate file) */}
+                <button
+                  onClick={handleOpenExternalAudio}
+                  data-testid="add-external-audio-btn"
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/40 transition-colors text-left font-medium"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add External Audio...</span>
+                </button>
+              </>
             )}
           </div>
         </div>

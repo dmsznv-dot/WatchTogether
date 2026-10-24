@@ -71,6 +71,34 @@ describe('VideoCanvas Component', () => {
     expect(onOpenFile).toHaveBeenCalledWith('cool_film.mp4');
   });
 
+  it('routes dropped audio and subtitle files to their tracks, not to the video', () => {
+    const onOpenFile = vi.fn();
+    const onLoadAudio = vi.fn();
+    const onLoadSubtitle = vi.fn();
+    render(
+      <VideoCanvas
+        currentFile="/path/to/movie.mkv"
+        isPlaying={false}
+        onOpenFile={onOpenFile}
+        onLoadAudio={onLoadAudio}
+        onLoadSubtitle={onLoadSubtitle}
+        onTogglePlayPause={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+        onSelectFileClick={vi.fn()}
+      />
+    );
+    const container = screen.getByTestId('video-canvas-container');
+    const drop = (name: string) =>
+      fireEvent.drop(container, { dataTransfer: { files: [new File(['x'], name)] } });
+    drop('Russian Dub.MKA');
+    drop('commentary.mp3');
+    drop('movie.srt');
+    expect(onLoadAudio).toHaveBeenCalledWith('Russian Dub.MKA');
+    expect(onLoadAudio).toHaveBeenCalledWith('commentary.mp3');
+    expect(onLoadSubtitle).toHaveBeenCalledWith('movie.srt');
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
   it('handles single click play/pause vs double click fullscreen', () => {
     const onTogglePlayPause = vi.fn();
     const onToggleFullscreen = vi.fn();
