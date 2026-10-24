@@ -156,8 +156,16 @@ export const roomApi = {
     listenEvent<RoomUpdatePayload>('room://update', callback),
 };
 
+// Native file dialogs take focus from the window; the mini player must not react to that.
+let nativeDialogsOpen = 0;
+export const isNativeDialogOpen = (): boolean => nativeDialogsOpen > 0;
+
 // Window & Dialog APIs
 export const windowApi = {
+  /** Mini player: small always-on-top window in the screen corner (true) or the normal window. */
+  setMini: (enabled: boolean): Promise<boolean> =>
+    invokeCommand<boolean>('cmd_window_set_mini', { enabled }),
+
   toggleFullscreen: async (): Promise<boolean> => {
     if (hasTauri()) {
       return invokeCommand<boolean>('cmd_window_toggle_fullscreen');
@@ -173,21 +181,30 @@ export const windowApi = {
   },
 
   openFileDialog: async (kind: MediaFileKind = 'video'): Promise<string | null> => {
-    if (hasTauri()) {
-      try {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const filters = {
-          video: [{ name: 'Video Files', extensions: VIDEO_EXTENSIONS }],
-          subtitle: [{ name: 'Subtitles', extensions: SUBTITLE_EXTENSIONS }],
-          audio: [{ name: 'Audio Files', extensions: AUDIO_EXTENSIONS }],
-        };
-        const selected = await open({ multiple: false, filters: filters[kind] });
-        if (typeof selected === 'string') return selected;
-        return null;
-      } catch {
-        return invokeCommand<string | null>('cmd_dialog_open_file');
-      }
+    nativeDialogsOpen++;
+    try {
+      return await openFileDialogNow(kind);
+    } finally {
+      nativeDialogsOpen--;
     }
-    return invokeCommand<string | null>('cmd_dialog_open_file');
   },
 };
+
+async function openFileDialogNow(kind: MediaFileKind): Promise<string | null> {
+  if (hasTauri()) {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const filters = {
+        video: [{ name: 'Video Files', extensions: VIDEO_EXTENSIONS }],
+        subtitle: [{ name: 'Subtitles', extensions: SUBTITLE_EXTENSIONS }],
+        audio: [{ name: 'Audio Files', extensions: AUDIO_EXTENSIONS }],
+      };
+      const selected = await open({ multiple: false, filters: filters[kind] });
+      if (typeof selected === 'string') return selected;
+      return null;
+    } catch {
+      return invokeCommand<string | null>('cmd_dialog_open_file');
+    }
+  }
+  return invokeCommand<string | null>('cmd_dialog_open_file');
+}

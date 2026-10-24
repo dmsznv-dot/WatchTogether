@@ -14,6 +14,8 @@ export interface SettingsModalProps {
   onAudioLangChange: (lang: string | undefined) => void;
   onSubLangChange: (lang: string | undefined) => void;
   onSubtitlesEnabledChange: (enabled: boolean) => void;
+  miniPlayerOnSwitch?: boolean;
+  onMiniPlayerOnSwitchChange?: (enabled: boolean) => void;
 }
 
 export function SettingsModal({
@@ -27,6 +29,8 @@ export function SettingsModal({
   onAudioLangChange,
   onSubLangChange,
   onSubtitlesEnabledChange,
+  miniPlayerOnSwitch = true,
+  onMiniPlayerOnSwitchChange,
 }: SettingsModalProps) {
   const shortcuts = [
     { key: 'Space', desc: 'Play / Pause toggle' },
@@ -36,7 +40,8 @@ export function SettingsModal({
     { key: 'F', desc: 'Toggle Fullscreen' },
     { key: 'M', desc: 'Toggle Local Mute' },
     { key: 'Cmd/Ctrl + O', desc: 'Open Video File' },
-    { key: 'Esc', desc: 'Exit Fullscreen / Close Modal' },
+    { key: 'I', desc: 'Playback statistics' },
+    { key: 'Esc', desc: 'Exit Fullscreen / Mini Player / Close Modal' },
   ];
 
   return (
@@ -99,6 +104,24 @@ export function SettingsModal({
             </div>
           </div>
         </div>
+
+        {onMiniPlayerOnSwitchChange && (
+          <label className="flex items-start gap-3 text-sm text-zinc-200 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={miniPlayerOnSwitch}
+              onChange={(e) => onMiniPlayerOnSwitchChange(e.target.checked)}
+              className="mt-0.5 accent-indigo-500"
+              data-testid="settings-mini-player-toggle"
+            />
+            <span>
+              Mini player when switching apps
+              <span className="block text-xs text-zinc-400">
+                While a video plays, Alt+Tab / Cmd+Tab turns the window into a small player on top of other apps. Double-click or press Esc to expand it.
+              </span>
+            </span>
+          </label>
+        )}
 
         {/* Keyboard Shortcuts Table */}
         <div className="flex flex-col gap-2">

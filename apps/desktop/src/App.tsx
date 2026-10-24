@@ -6,6 +6,8 @@ import { HostAuthorityToast } from './features/rooms/HostAuthorityToast';
 import { CreateRoomModal } from './features/rooms/CreateRoomModal';
 import { UpdateBanner } from './features/update/UpdateBanner';
 import { useUpdater } from './hooks/useUpdater';
+import { useMiniPlayer } from './hooks/useMiniPlayer';
+import { MiniPlayerOverlay } from './features/player/MiniPlayerOverlay';
 import { JoinRoomModal } from './features/rooms/JoinRoomModal';
 import { SettingsModal } from './features/settings/SettingsModal';
 import {
@@ -85,10 +87,21 @@ export function App() {
     timeoutMs: 2500,
   });
 
+  const miniPlayer = useMiniPlayer({
+    enabled: settings.miniPlayerOnSwitch,
+    isPlaying: player.isPlaying,
+    hasVideo: !!player.currentFile,
+  });
+
   const handleToggleFullscreen = useCallback(async () => {
+    // In the mini player, "fullscreen" gestures (double-click, F) bring the full window back.
+    if (miniPlayer.isMini) {
+      await miniPlayer.exit();
+      return;
+    }
     const next = await windowApi.toggleFullscreen();
     setIsFullscreen(next);
-  }, []);
+  }, [miniPlayer]);
 
   const handleOpenFilePicker = useCallback(async () => {
     const selected = await windowApi.openFileDialog();
@@ -133,7 +146,9 @@ export function App() {
     },
     onOpenFile: handleOpenFilePicker,
     onEscape: () => {
-      if (isFullscreen) {
+      if (miniPlayer.isMini) {
+        void miniPlayer.exit();
+      } else if (isFullscreen) {
         handleToggleFullscreen();
       }
     },
@@ -162,8 +177,10 @@ export function App() {
       />
 
       {/* Top Header HUD Overlay */}
+      {miniPlayer.isMini && <MiniPlayerOverlay onExpand={() => void miniPlayer.exit()} />}
+
       <HeaderHUD
-        isVisible={isHudVisible}
+        isVisible={isHudVisible && !miniPlayer.isMini}
         currentFile={player.currentFile}
         sessionType={room.sessionType}
         roomCode={room.roomCode}
@@ -182,7 +199,7 @@ export function App() {
 
       {/* Floating Bottom Media Controls HUD */}
       <ControlsHUD
-        isVisible={isHudVisible}
+        isVisible={isHudVisible && !miniPlayer.isMini}
         isPlaying={player.isPlaying}
         positionSec={player.positionSec}
         durationSec={player.durationSec}
@@ -220,7 +237,7 @@ export function App() {
       {/* Host Authority Toast (for non-hosts in HostOnly mode) */}
       <HostAuthorityToast message={room.authorityToast} />
 
-      <UpdateBanner status={updater.status} onInstall={updater.install} onDismiss={updater.dismiss} />
+      <UpdateBanner status={miniPlayer.isMini ? { state: 'idle' } : updater.status} onInstall={updater.install} onDismiss={updater.dismiss} />
 
       {room.error && !isModalOpen && <div role="alert" className="absolute top-24 left-4 right-4 z-40 p-3 rounded-xl bg-rose-950 text-rose-200">{room.error}</div>}
 
@@ -259,6 +276,8 @@ export function App() {
         onAudioLangChange={settings.setPreferredAudioLang}
         onSubLangChange={settings.setPreferredSubLang}
         onSubtitlesEnabledChange={settings.setSubtitlesEnabled}
+        miniPlayerOnSwitch={settings.miniPlayerOnSwitch}
+        onMiniPlayerOnSwitchChange={settings.setMiniPlayerOnSwitch}
       />
     </div>
   );

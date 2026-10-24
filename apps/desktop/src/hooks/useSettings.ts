@@ -8,6 +8,7 @@ const KEYS = {
   SUB_LANG: 'watchtogether:sub_lang',
   SUB_ENABLED: 'watchtogether:sub_enabled',
   DISPLAY_NAME: 'watchtogether:display_name',
+  MINI_PLAYER: 'watchtogether:mini_player',
 };
 
 export function useSettings() {
@@ -35,6 +36,16 @@ export function useSettings() {
   const [displayName, setDisplayNameState] = useState<string>(() => {
     return storage.getItem(KEYS.DISPLAY_NAME) || 'Guest';
   });
+
+  // On by default: switching to another app while a video plays shows the mini player.
+  const [miniPlayerOnSwitch, setMiniPlayerState] = useState<boolean>(() => {
+    return storage.getItem(KEYS.MINI_PLAYER) !== 'false';
+  });
+
+  const setMiniPlayerOnSwitch = useCallback((enabled: boolean) => {
+    setMiniPlayerState(enabled);
+    storage.setItem(KEYS.MINI_PLAYER, enabled.toString());
+  }, []);
 
   const setVolume = useCallback((v: number) => {
     const clamped = Math.max(0, Math.min(1, v));
@@ -77,6 +88,8 @@ export function useSettings() {
     preferredSubLang,
     subtitlesEnabled,
     displayName,
+    miniPlayerOnSwitch,
+    setMiniPlayerOnSwitch,
     setVolume,
     setIsMuted,
     setPreferredAudioLang,
