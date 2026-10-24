@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for Developer ID (outside the Mac App Store) builds,
+  applied by scripts/bundle_mpv_macos.py. No App Sandbox: the in-app updater must be
+  able to replace the application, and rooms need incoming/outgoing UDP (iroh).
+-->
+<plist version="1.0">
+<dict>
+    <!-- libmpv is loaded with dlopen; do not refuse a bundled library over its signer -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- libmpv's LuaJIT (built-in stats/OSD scripts) generates code at run time -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

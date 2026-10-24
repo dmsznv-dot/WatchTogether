@@ -6,7 +6,8 @@
     ],
     "resources": {
       "mpv-2.dll": "mpv-2.dll"
-    }
+    },
+    "createUpdaterArtifacts": true
   },
   "app": {
     "windows": [

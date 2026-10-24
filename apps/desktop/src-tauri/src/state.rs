@@ -56,6 +56,8 @@ pub struct AppState {
     pub sync_coordinator: Arc<Mutex<ClientSyncCoordinator>>,
     pub event_sink: Arc<dyn EventSink>,
     pub time_pos_throttler: Arc<std::sync::Mutex<TimePosThrottler>>,
+    /// Prevents system and display sleep while a video plays.
+    pub keep_awake: crate::keep_awake::KeepAwake,
 }
 
 pub struct TimePosThrottler {
@@ -146,6 +148,7 @@ impl AppState {
             sync_coordinator: Arc::new(Mutex::new(ClientSyncCoordinator::new(0))),
             event_sink,
             time_pos_throttler: Arc::new(std::sync::Mutex::new(TimePosThrottler::new())),
+            keep_awake: crate::keep_awake::KeepAwake::new(),
         });
         state.start_player_event_listener();
         state
@@ -196,6 +199,9 @@ impl AppState {
                         let _ = this
                             .event_sink
                             .emit_serializable("player://state-change", &payload);
+                        if let Err(e) = this.keep_awake.set(is_playing) {
+                            tracing::warn!("Cannot change sleep prevention: {e}");
+                        }
 
                         // If host is active in a room, synchronize playback play/pause state
                         let now_ms = std::time::SystemTime::now()

@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod error;
 pub mod events;
+mod keep_awake;
 mod self_host;
 #[cfg(target_os = "windows")]
 mod video_frames;
@@ -332,6 +333,8 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(move |app| {
             event_sink.set_app_handle(app.handle().clone());
             let window = app

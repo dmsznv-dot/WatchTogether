@@ -173,10 +173,32 @@ def bundle_app(app_path):
 
     verify_bundle(app_path)
 
-    # Ad-hoc sign the app so macOS Gatekeeper / AMFI doesn't complain about modified dylibs
-    print("Applying ad-hoc code signature to all bundled frameworks and main app...")
-    run(["codesign", "--force", "--deep", "-s", "-", str(app_path)], check=True)
+    sign_bundle(app_path)
     print("Done! Bundle is fully self-contained.")
+
+
+def sign_bundle(app_path):
+    """Ad-hoc by default. With WT_CODESIGN_IDENTITY (a "Developer ID Application" identity
+    in the keychain) every library and then the app get a real signature with the hardened
+    runtime and a secure timestamp, as Apple notarization requires."""
+    identity = os.environ.get("WT_CODESIGN_IDENTITY", "").strip()
+    if not identity:
+        print("Applying ad-hoc code signature to all bundled frameworks and main app...")
+        run(["codesign", "--force", "--deep", "-s", "-", str(app_path)], check=True)
+        return
+    entitlements = os.environ.get(
+        "WT_CODESIGN_ENTITLEMENTS",
+        str(Path(__file__).resolve().parent.parent / "apps/desktop/src-tauri/Entitlements.developer-id.plist"),
+    )
+    print(f"Signing with {identity} (hardened runtime)...")
+    signed = ["codesign", "--force", "--timestamp", "--options", "runtime", "-s", identity]
+    frameworks_dir = app_path / "Contents" / "Frameworks"
+    # Inside-out: nested code first, the app bundle last (no --deep, as Apple recommends).
+    for lib in sorted(frameworks_dir.glob("*.dylib")):
+        if not lib.is_symlink():
+            run(signed + [str(lib)], check=True)
+    run(signed + ["--entitlements", entitlements, str(app_path)], check=True)
+    run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app_path)], check=True)
 
 
 def verify_bundle(app_path):

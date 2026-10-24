@@ -34,7 +34,8 @@ xattr -dr com.apple.quarantine "/Applications/Watch Together.app"
 **Windows.** Запустите установщик. Если появится SmartScreen, нажмите
 «Подробнее» → «Выполнить в любом случае».
 
-Обоим участникам нужна одна и та же версия приложения.
+Обоим участникам нужна одна и та же версия приложения. Когда выходит новая, приложение
+показывает плашку **Update available** — обновление ставится одной кнопкой.
 
 ## Как смотреть вместе
 
@@ -124,6 +125,8 @@ cargo tauri build --bundles msi,nsis --config src-tauri/tauri.windows.conf.json
 cargo test --workspace          # Rust
 cd apps/desktop && npm test     # интерфейс
 ```
+
+Подпись сборок для Apple и Windows и ключ обновлений — в [docs/SIGNING.md](docs/SIGNING.md).
 
 Тесты с настоящим libmpv и сетью помечены `#[ignore]` и запускаются с `--ignored`
 (см. [build.yml](.github/workflows/build.yml)). Сборки для обеих систем и релизы

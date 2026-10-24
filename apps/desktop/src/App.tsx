@@ -4,6 +4,8 @@ import { HeaderHUD } from './features/player/HeaderHUD';
 import { ControlsHUD } from './features/player/ControlsHUD';
 import { HostAuthorityToast } from './features/rooms/HostAuthorityToast';
 import { CreateRoomModal } from './features/rooms/CreateRoomModal';
+import { UpdateBanner } from './features/update/UpdateBanner';
+import { useUpdater } from './hooks/useUpdater';
 import { JoinRoomModal } from './features/rooms/JoinRoomModal';
 import { SettingsModal } from './features/settings/SettingsModal';
 import {
@@ -31,6 +33,7 @@ export function App() {
 
   const tracks = useTracks();
   const room = useRoom();
+  const updater = useUpdater();
 
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
@@ -216,6 +219,8 @@ export function App() {
 
       {/* Host Authority Toast (for non-hosts in HostOnly mode) */}
       <HostAuthorityToast message={room.authorityToast} />
+
+      <UpdateBanner status={updater.status} onInstall={updater.install} onDismiss={updater.dismiss} />
 
       {room.error && !isModalOpen && <div role="alert" className="absolute top-24 left-4 right-4 z-40 p-3 rounded-xl bg-rose-950 text-rose-200">{room.error}</div>}
 
