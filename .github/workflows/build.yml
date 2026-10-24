@@ -100,7 +100,12 @@ jobs:
         run: |
           python3 scripts/bundle_mpv_macos.py "target/release/bundle/macos/Watch Together.app"
           mkdir -p target/release/bundle/dmg
-          hdiutil create -volname "Watch Together" -srcfolder "target/release/bundle/macos/Watch Together.app" -ov -format UDZO "target/release/bundle/dmg/Watch_Together_macOS.dmg"
+          # hdiutil intermittently fails with "Resource busy" on hosted runners.
+          for attempt in 1 2 3 4 5; do
+            hdiutil create -volname "Watch Together" -srcfolder "target/release/bundle/macos/Watch Together.app" -ov -format UDZO "target/release/bundle/dmg/Watch_Together_macOS.dmg" && break
+            [ "$attempt" = 5 ] && exit 1
+            echo "hdiutil failed (attempt $attempt), retrying in 10 s"; sleep 10
+          done
 
       - name: Verify packaged DMG launches without Homebrew
         if: matrix.platform == 'macos-latest'
