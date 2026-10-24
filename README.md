@@ -23,15 +23,15 @@
 
 ### Скачать приложение для Windows
 
-**[Скачать установщик EXE (Windows x64)](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-8a82072/WatchTogether-Windows-x64-Setup.exe)** · **[Скачать ZIP](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-8a82072/WatchTogether-Windows-x64.zip)**
+**[Скачать установщик EXE (Windows x64)](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3746a24/WatchTogether-Windows-x64-Setup.exe)** · **[Скачать ZIP](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3746a24/WatchTogether-Windows-x64.zip)**
 
 Windows CI проходит тесты, сборку установщика, тихую установку и загрузку установленной libmpv. EXE включает медиабиблиотеку.
 
 ### Скачать приложение для Mac
 
-**[Скачать ZIP для Mac](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-8a82072/WatchTogether-macOS.zip)** · **[Скачать DMG напрямую](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-8a82072/Watch_Together_macOS.dmg)**
+**[Скачать ZIP для Mac](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3746a24/WatchTogether-macOS.zip)** · **[Скачать DMG напрямую](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3746a24/Watch_Together_macOS.dmg)**
 
-[Описание релиза](https://github.com/dmsznv-dot/WatchTogether/releases/tag/preview-8a82072). В ZIP из Releases установщик `Watch_Together_macOS.dmg` лежит прямо в корне архива.
+[Описание релиза](https://github.com/dmsznv-dot/WatchTogether/releases/tag/preview-3746a24). В ZIP из Releases установщик `Watch_Together_macOS.dmg` лежит прямо в корне архива.
 
 **Code → Download ZIP скачивает только исходники. В этом ZIP приложения и DMG нет.**
 
@@ -95,7 +95,7 @@ Windows CI проходит тесты, сборку установщика, т�
 
 ### 🪟 Windows (10 / 11)
 
-1. Download the **[Windows x64 EXE installer](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-8a82072/WatchTogether-Windows-x64-Setup.exe)** from Releases.
+1. Download the **[Windows x64 EXE installer](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-3746a24/WatchTogether-Windows-x64-Setup.exe)** from Releases.
 2. Run the installer and launch **Watch Together** from your Start menu.  
    *(Embedded hardware-accelerated video decoding is included out of the box).*
 
