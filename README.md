@@ -15,8 +15,8 @@
 
 | Система | Файл |
 |:---|:---|
-| **macOS 15+**, Apple Silicon (M1 и новее) | [Watch_Together_macOS.dmg](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-b3e37ba/Watch_Together_macOS.dmg) |
-| **Windows 10 / 11**, x64 | [WatchTogether-Windows-x64-Setup.exe](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-b3e37ba/WatchTogether-Windows-x64-Setup.exe) |
+| **macOS 15+**, Apple Silicon (M1 и новее) | [Watch_Together_macOS.dmg](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-1e6aade/Watch_Together_macOS.dmg) |
+| **Windows 10 / 11**, x64 | [WatchTogether-Windows-x64-Setup.exe](https://github.com/dmsznv-dot/WatchTogether/releases/download/preview-1e6aade/WatchTogether-Windows-x64-Setup.exe) |
 
 Все версии — на странице [Releases](https://github.com/dmsznv-dot/WatchTogether/releases).
 Кнопка **Code → Download ZIP** скачивает только исходный код, без приложения.
