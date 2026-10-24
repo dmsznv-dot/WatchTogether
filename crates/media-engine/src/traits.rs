@@ -77,6 +77,11 @@ pub trait MediaPlayer: Send + Sync {
         Ok(false)
     }
 
+    /// Shows or hides the on-video playback statistics (fps, dropped frames, decoder).
+    fn toggle_stats(&self) -> Result<(), MediaEngineError> {
+        Ok(())
+    }
+
     /// Retrieves shared protocol playback state.
     fn playback_state(&self) -> Result<PlaybackState, MediaEngineError>;
 

@@ -105,3 +105,99 @@ fn real_decoder_announces_tracks_and_switches_audio_and_subtitles() {
         .iter()
         .any(|t| t.id == id && t.is_selected));
 }
+
+/// Canvas path budget: a 1080p60 clip must be delivered at (nearly) full rate by the
+/// software renderer, which the Windows build uses. Set WT_TEST_HD60 to `hd60.mp4`
+/// from scripts/create_player_fixture.py.
+#[test]
+#[ignore = "requires libmpv and WT_TEST_HD60 fixture"]
+fn software_renderer_keeps_up_with_1080p60() {
+    use media_engine::mpv::{MAX_HEIGHT, MAX_WIDTH};
+    let path = std::env::var("WT_TEST_HD60").expect("set WT_TEST_HD60");
+    let hwdec = std::env::var("WT_TEST_HWDEC").unwrap_or_else(|_| "auto-safe".into());
+    let player = std::sync::Arc::new(
+        MpvPlayer::new_with_options(&[("vo", "libmpv"), ("ao", "null"), ("hwdec", &hwdec)])
+            .unwrap(),
+    );
+    let mut renderer = player.software_renderer().unwrap();
+    player.open_file(&path).unwrap();
+    player.play().unwrap();
+    let (w, h) = (MAX_WIDTH, MAX_HEIGHT);
+    let stride = w as usize * 4;
+    let mut storage = vec![0u32; w as usize * h as usize];
+    let frame = unsafe {
+        std::slice::from_raw_parts_mut(storage.as_mut_ptr().cast::<u8>(), storage.len() * 4)
+    };
+    // Skip startup (file open, decoder init) before measuring.
+    let warmup = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < warmup {
+        if renderer.has_new_frame() {
+            renderer.render_into(w, h, stride, frame).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let drops_before: i64 = player
+        .property_string("frame-drop-count")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let started = Instant::now();
+    let (mut frames, mut render_total, mut render_max) = (0u32, Duration::ZERO, Duration::ZERO);
+    while started.elapsed() < Duration::from_secs(3) {
+        if renderer.has_new_frame() {
+            let t = Instant::now();
+            renderer.render_into(w, h, stride, frame).unwrap();
+            let spent = t.elapsed();
+            render_total += spent;
+            render_max = render_max.max(spent);
+            frames += 1;
+        } else {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    let fps = frames as f64 / started.elapsed().as_secs_f64();
+    let avg_ms = render_total.as_secs_f64() * 1000.0 / frames.max(1) as f64;
+    let drops: i64 = player
+        .property_string("frame-drop-count")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+        - drops_before;
+    println!(
+        "1080p60 software render: {fps:.1} fps, render avg {avg_ms:.1} ms, max {:.1} ms, \
+         decoder drops {drops}, hwdec {:?}",
+        render_max.as_secs_f64() * 1000.0,
+        player.property_string("hwdec-current")
+    );
+    assert!(fps >= 50.0, "only {fps:.1} fps delivered for 60 fps video");
+    assert!(avg_ms < 12.0, "rendering 1080p takes {avg_ms:.1} ms per frame");
+}
+
+/// The `I` key toggles mpv's stats overlay; it must actually be drawn into the frames.
+#[test]
+#[ignore = "requires libmpv and WT_TEST_MEDIA fixture"]
+fn stats_overlay_is_drawn_into_rendered_frames() {
+    let path = std::env::var("WT_TEST_MEDIA").expect("set WT_TEST_MEDIA");
+    let player = std::sync::Arc::new(
+        MpvPlayer::new_with_options(&[("vo", "libmpv"), ("ao", "null")]).unwrap(),
+    );
+    let mut renderer = player.software_renderer().unwrap();
+    player.open_file(&path).unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    player.pause().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let (w, h) = (640, 360);
+    let corner = |frame: &[u8]| -> Vec<u8> {
+        (0..h / 3).flat_map(|y| frame[y * w * 4..(y * w + w / 2) * 4].to_vec()).collect()
+    };
+    let before = corner(&renderer.render(w as u32, h as u32).unwrap());
+    player.toggle_stats().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+        let after = corner(&renderer.render(w as u32, h as u32).unwrap());
+        let changed = before.iter().zip(&after).filter(|(a, b)| a.abs_diff(**b) > 40).count();
+        if changed > 200 {
+            return;
+        }
+    }
+    panic!("stats overlay never appears in the rendered frame");
+}

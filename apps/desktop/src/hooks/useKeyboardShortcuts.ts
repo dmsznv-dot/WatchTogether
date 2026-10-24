@@ -5,6 +5,7 @@ export interface KeyboardShortcutsHandlers {
   onSeekRelative?: (seconds: number) => void;
   onToggleFullscreen?: () => void;
   onToggleMute?: () => void;
+  onToggleStats?: () => void;
   onAdjustVolume?: (delta: number) => void;
   onOpenFile?: () => void;
   onEscape?: () => void;
@@ -16,6 +17,7 @@ export function useKeyboardShortcuts({
   onSeekRelative,
   onToggleFullscreen,
   onToggleMute,
+  onToggleStats,
   onAdjustVolume,
   onOpenFile,
   onEscape,
@@ -90,6 +92,13 @@ export function useKeyboardShortcuts({
         return;
       }
 
+      // I / i: Playback statistics overlay (fps, dropped frames, decoder)
+      if (isKey('KeyI', 'i')) {
+        e.preventDefault();
+        if (!e.repeat) onToggleStats?.();
+        return;
+      }
+
       // Escape: Dismiss or exit fullscreen
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -108,6 +117,7 @@ export function useKeyboardShortcuts({
     onSeekRelative,
     onToggleFullscreen,
     onToggleMute,
+    onToggleStats,
     onAdjustVolume,
     onOpenFile,
     onEscape,

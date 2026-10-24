@@ -75,11 +75,13 @@ jobs:
       - name: Run workspace cargo tests
         run: cargo test --workspace
 
-      - name: Verify real decoder tracks and subtitles
+      - name: Verify real decoder tracks, subtitles and 1080p60 rendering
         shell: bash
         run: |
           python scripts/create_player_fixture.py
-          WT_TEST_MEDIA="$(python -c 'from pathlib import Path; print(Path("target/player-fixtures/multi.mkv").resolve())')" cargo test -p media-engine --test real_mpv_test -- --ignored
+          fixture() { python -c "from pathlib import Path; print(Path('target/player-fixtures/$1').resolve())"; }
+          WT_TEST_MEDIA="$(fixture multi.mkv)" WT_TEST_HD60="$(fixture hd60.mp4)" \
+            cargo test -p media-engine --test real_mpv_test -- --ignored --nocapture
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0.0" --locked

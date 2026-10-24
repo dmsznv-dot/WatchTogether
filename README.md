@@ -16,7 +16,7 @@
 
 Изменения находятся в ветке **main**:
 
-- Видео встраивается в окно приложения: OpenGL Render API на macOS, canvas через libmpv Software Render API на Windows (до 1280×720, около 30 кадров/с).
+- Видео встраивается в окно приложения: OpenGL Render API на macOS, canvas через libmpv Software Render API на Windows. На обеих платформах — до 1080p и 60 кадров/с; клавиша **I** показывает статистику (реальные кадры/с, потерянные кадры, декодер).
 - Исправлены хоткеи, включая русскую раскладку, и полноэкранный режим окна.
 - Исправлены обновление списка аудиодорожек, встроенные ASS и загрузка внешних SRT.
 - Добавлена новая бело-серебристая иконка с чёрным Play.
@@ -132,6 +132,7 @@ Windows CI проходит тесты, сборку установщика, т�
 | **F** / **Double-click** | Toggle Fullscreen |
 | **Esc** | Exit Fullscreen |
 | **Cmd / Ctrl + O** | Open Local Video File |
+| **I** | Playback statistics: fps, dropped frames, resolution, decoder |
 
 ---
 

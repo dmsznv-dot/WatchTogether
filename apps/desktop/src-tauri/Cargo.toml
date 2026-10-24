@@ -27,6 +27,11 @@ tauri-plugin-fs = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
+[target.'cfg(windows)'.dependencies]
+# Same versions Tauri's WebView2 backend uses; needed for shared video buffers.
+webview2-com = "0.39"
+windows-core = "0.62"
+
 [build-dependencies]
 tauri-build = { version = "2", default-features = false , features = [] }
 

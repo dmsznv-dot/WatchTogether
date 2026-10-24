@@ -299,6 +299,9 @@ export class MockIpcBackend {
         return undefined as unknown as T;
       }
 
+      case 'cmd_player_toggle_stats':
+        return undefined as unknown as T;
+
       case 'cmd_player_load_external_subtitle':
       case 'cmd_player_add_subtitle':
       case 'player_add_subtitle': {

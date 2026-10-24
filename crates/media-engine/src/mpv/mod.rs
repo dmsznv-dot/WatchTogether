@@ -1,6 +1,6 @@
 pub mod ffi;
 mod software;
-pub use software::SoftwareRenderer;
+pub use software::{SoftwareRenderer, MAX_HEIGHT, MAX_WIDTH};
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -97,6 +97,20 @@ pub struct MpvPlayer {
 }
 
 impl MpvPlayer {
+    /// Reads any mpv property as a string (e.g. `hwdec-current`, `frame-drop-count`).
+    pub fn property_string(&self, name: &str) -> Option<String> {
+        let name = CString::new(name).ok()?;
+        let ptr = unsafe { (self.api.mpv_get_property_string)(self.handle.0, name.as_ptr()) };
+        if ptr.is_null() {
+            return None;
+        }
+        let value = unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { (self.api.mpv_free)(ptr.cast()) };
+        Some(value)
+    }
+
     /// Attempts to load `libmpv` dynamically and initialize player context.
     pub fn new() -> Result<Self, MediaEngineError> {
         Self::new_with_options(&[])
@@ -371,6 +385,15 @@ impl MpvPlayer {
 }
 
 impl MediaPlayer for MpvPlayer {
+    fn toggle_stats(&self) -> Result<(), MediaEngineError> {
+        // mpv's built-in stats.lua overlay, drawn into the rendered video frames.
+        let cmd = CString::new("script-binding").unwrap();
+        let arg = CString::new("stats/display-stats-toggle").unwrap();
+        let mut args: [*const c_char; 3] = [cmd.as_ptr(), arg.as_ptr(), std::ptr::null()];
+        let res = unsafe { (self.api.mpv_command)(self.handle.0, args.as_mut_ptr()) };
+        self.check_error(res, "script-binding stats/display-stats-toggle")
+    }
+
     fn open_file(&self, path_or_url: &str) -> Result<(), MediaEngineError> {
         *self.current_file.lock().unwrap() = Some(path_or_url.to_string());
         let cmd =

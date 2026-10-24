@@ -95,6 +95,9 @@ export const playerApi = {
   addSubtitle: (path: string): Promise<void> =>
     invokeCommand<void>('cmd_player_add_subtitle', { path }),
 
+  /** mpv's on-video statistics: real fps, dropped frames, resolution, decoder. */
+  toggleStats: (): Promise<void> => invokeCommand<void>('cmd_player_toggle_stats'),
+
   onTimePos: (callback: (payload: TimePosPayload) => void): Promise<() => void> =>
     listenEvent<TimePosPayload>('player://time-pos', callback),
 

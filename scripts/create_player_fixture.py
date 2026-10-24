@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Create a small, real MKV with two audio tracks and a Cyrillic SRT sidecar."""
+"""Create a small, real MKV with two audio tracks and a Cyrillic SRT sidecar,
+plus a 1080p60 clip (hd60.mp4) for frame-rate checks."""
 from pathlib import Path
 import subprocess
 import sys
@@ -27,6 +28,13 @@ subprocess.run([
     "-t", "10", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s",
     "-c:v", "libx264", "-c:a", "aac", "-c:s", "ass",
     "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=rus", str(video)
+], check=True)
+# 1080p60 clip for frame-rate checks of the video output paths.
+subprocess.run([
+    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=60",
+    "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+    str(root / "hd60.mp4")
 ], check=True)
 video.with_suffix(".srt").write_text("1\n00:00:00,000 --> 00:00:09,000\nТест субтитров — Watch Together\n", encoding="utf-8")
 print(video.resolve())

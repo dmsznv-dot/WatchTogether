@@ -14,7 +14,7 @@ import {
   useAutoHide,
   useKeyboardShortcuts,
 } from './hooks';
-import { hasTauri, windowApi } from './services/ipc';
+import { hasTauri, playerApi, windowApi } from './services/ipc';
 
 export function App() {
   const native = hasTauri();
@@ -119,6 +119,9 @@ export function App() {
     onToggleMute: () => {
       player.toggleMute();
       settings.setIsMuted(!player.isMuted);
+    },
+    onToggleStats: () => {
+      void playerApi.toggleStats().catch((err) => console.warn('Stats overlay:', err));
     },
     onAdjustVolume: (delta) => {
       const nextVol = Math.max(0, Math.min(1, player.volume + delta));

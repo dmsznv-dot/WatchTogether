@@ -16,6 +16,14 @@ describe('useKeyboardShortcuts Hook', () => {
     expect(onOpenFile).toHaveBeenCalledOnce();
   });
 
+  it('toggles the playback statistics overlay with I in any layout', () => {
+    const onToggleStats = vi.fn();
+    renderHook(() => useKeyboardShortcuts({ onToggleStats }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ш', code: 'KeyI' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', code: 'KeyI', repeat: true }));
+    expect(onToggleStats).toHaveBeenCalledOnce();
+  });
+
   it('does not hijack modified shortcuts or repeat toggle actions', () => {
     const onToggleFullscreen = vi.fn();
     const onTogglePlayPause = vi.fn();

@@ -4,6 +4,8 @@ pub mod commands;
 pub mod error;
 pub mod events;
 mod self_host;
+#[cfg(target_os = "windows")]
+mod video_frames;
 pub mod state;
 
 use media_engine::state::PlayerState;
@@ -227,23 +229,24 @@ async fn cmd_dialog_open_file(
         .map_err(|e| e.to_string())
 }
 
-#[cfg(target_os = "windows")]
-struct WindowsFrames(Arc<std::sync::Mutex<media_engine::mpv::SoftwareRenderer>>);
+#[tauri::command]
+async fn cmd_player_toggle_stats(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    state.player.toggle_stats().map_err(|e| e.to_string())
+}
+
+/// Fallback video path: the frame travels through IPC. Empty when nothing changed.
 #[tauri::command]
 async fn cmd_player_frame(
     app: tauri::AppHandle,
     width: u32,
     height: u32,
+    force: Option<bool>,
 ) -> Result<tauri::ipc::Response, String> {
     #[cfg(target_os = "windows")]
     {
-        let renderer = Arc::clone(&app.state::<WindowsFrames>().0);
+        let frames = Arc::clone(&app.state::<Arc<video_frames::WindowsFrames>>());
         let bytes = tauri::async_runtime::spawn_blocking(move || {
-            renderer
-                .lock()
-                .map_err(|e| e.to_string())?
-                .render(width, height)
-                .map_err(|e| e.to_string())
+            frames.render_copy(width, height, force.unwrap_or(true))
         })
         .await
         .map_err(|e| e.to_string())??;
@@ -251,8 +254,54 @@ async fn cmd_player_frame(
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, width, height);
+        let _ = (app, width, height, force);
         Err("Canvas renderer is Windows-only".into())
+    }
+}
+
+/// Posts the shared frame buffers to the page; returns how many it will receive.
+#[tauri::command]
+async fn cmd_video_share_frames(window: tauri::WebviewWindow) -> Result<usize, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let frames = Arc::clone(&window.state::<Arc<video_frames::WindowsFrames>>());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        window
+            .with_webview(move |webview| {
+                let _ = tx.send(frames.share(&webview));
+            })
+            .map_err(|e| e.to_string())?;
+        rx.await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        Err("Shared video buffers are Windows-only".into())
+    }
+}
+
+/// Renders the next frame into shared buffer `index`; false when there is no new frame.
+#[tauri::command]
+async fn cmd_player_frame_shared(
+    app: tauri::AppHandle,
+    index: usize,
+    width: u32,
+    height: u32,
+    force: bool,
+) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let frames = Arc::clone(&app.state::<Arc<video_frames::WindowsFrames>>());
+        tauri::async_runtime::spawn_blocking(move || {
+            frames.render_shared(index, width, height, force)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, index, width, height, force);
+        Err("Shared video buffers are Windows-only".into())
     }
 }
 
@@ -287,9 +336,9 @@ pub fn run() {
                 let player = Arc::new(media_engine::MpvPlayer::new_with_options(&[(
                     "vo", "libmpv",
                 )])?);
-                app.manage(WindowsFrames(Arc::new(std::sync::Mutex::new(
+                app.manage(Arc::new(video_frames::WindowsFrames::new(
                     player.software_renderer()?,
-                ))));
+                )));
                 player
             };
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -317,6 +366,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             cmd_player_frame,
+            cmd_player_frame_shared,
+            cmd_player_toggle_stats,
+            cmd_video_share_frames,
             cmd_player_open_file,
             cmd_player_play,
             cmd_player_pause,
