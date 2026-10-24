@@ -2,7 +2,7 @@ use crate::error::RoomServerError;
 use crate::room::Room;
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocketUpgrade},
         State,
     },
     routing::get,
@@ -155,10 +155,20 @@ impl RoomServer {
                                 if *cancel.borrow() { return; }
                                 // Cancellation surrounds the whole handler, including sends to
                                 // a slow/non-reading peer. Dropping it closes the TCP socket.
+                                let (sink, stream) = socket.split();
+                                let sink = sink.with(|text: String| {
+                                    futures_util::future::ready(Ok::<_, axum::Error>(Message::Text(text)))
+                                });
+                                let stream = stream
+                                    .take_while(|m| futures_util::future::ready(matches!(m, Ok(msg) if !matches!(msg, Message::Close(_)))))
+                                    .filter_map(|m| futures_util::future::ready(match m {
+                                        Ok(Message::Text(text)) => Some(text),
+                                        _ => None,
+                                    }));
                                 tokio::select! {
                                     biased;
                                     _ = cancel.changed() => {},
-                                    _ = handle_socket(socket, manager, allow_create, sockets_closed) => {},
+                                    _ = serve_connection(sink, stream, manager, allow_create, sockets_closed) => {},
                                 }
                             })
                         }
@@ -195,16 +205,22 @@ impl RoomServer {
     }
 }
 
-async fn handle_socket(
-    socket: WebSocket,
+/// Serves one participant connection over any transport that carries JSON text frames
+/// (WebSocket text messages, or newline-delimited lines on a QUIC stream).
+/// The connection ends when `inbound` ends, a send fails, or `closed` flips.
+pub async fn serve_connection<Tx, Rx>(
+    mut outbound: Tx,
+    mut inbound: Rx,
     manager: Arc<RoomManager>,
     allow_create: bool,
     mut closed: watch::Receiver<bool>,
-) {
+) where
+    Tx: futures_util::Sink<String> + Unpin,
+    Rx: futures_util::Stream<Item = String> + Unpin,
+{
     if *closed.borrow() {
         return;
     }
-    let (mut ws_sink, mut ws_stream) = socket.split();
     let (tx_direct, mut rx_direct) = mpsc::unbounded_channel::<ServerMessage>();
 
     // Current session context
@@ -215,10 +231,7 @@ async fn handle_socket(
     loop {
         tokio::select! {
             biased;
-            _ = closed.changed() => {
-                let _ = tokio::time::timeout(std::time::Duration::from_millis(100), ws_sink.send(Message::Close(None))).await;
-                break;
-            }
+            _ = closed.changed() => break,
 
             // Direct messages to this client
             Some(msg) = rx_direct.recv() => {
@@ -227,7 +240,7 @@ async fn handle_socket(
                     ServerMessage::RoomClosed { .. } | ServerMessage::ParticipantKicked { .. }
                 );
                 if let Ok(text) = serde_json::to_string(&msg) {
-                    if ws_sink.send(Message::Text(text)).await.is_err() {
+                    if outbound.send(text).await.is_err() {
                         break;
                     }
                 }
@@ -252,7 +265,7 @@ async fn handle_socket(
                 };
 
                 if let Ok(text) = serde_json::to_string(&msg) {
-                    if ws_sink.send(Message::Text(text)).await.is_err() {
+                    if outbound.send(text).await.is_err() {
                         break;
                     }
                 }
@@ -263,218 +276,201 @@ async fn handle_socket(
             }
 
             // Incoming messages from client
-            inbound = ws_stream.next() => {
-                let msg = match inbound {
-                    Some(Ok(m)) => m,
-                    _ => break, // Client disconnected or error
-                };
+            text = inbound.next() => {
+                let Some(text) = text else { break }; // Client disconnected or error
+                let client_msg: Result<ClientMessage, _> = serde_json::from_str(&text);
+                let now_ms = current_time_ms();
 
-                match msg {
-                    Message::Text(text) => {
-                        let client_msg: Result<ClientMessage, _> = serde_json::from_str(&text);
-                        let now_ms = current_time_ms();
+                match client_msg {
+                    Err(e) => {
+                        let _ = tx_direct.send(ServerMessage::Error {
+                            code: ErrorCode::InvalidMessage.as_str().to_string(),
+                            message: format!("Malformed message: {}", e),
+                        });
+                    }
+                    Ok(ClientMessage::SessionIdentify) => {
+                        if let Some(id)=&current_participant {let _=tx_direct.send(ServerMessage::SessionIdentity{participant_id:id.clone()});}
+                    }
+                    Ok(ClientMessage::RoomGetState) => {
+                        if let Some(room)=&current_room {let _=tx_direct.send(ServerMessage::RoomState(room.lock().await.get_snapshot(now_ms)));}
+                    }
+                    Ok(ClientMessage::RoomCreate { host_name, video, permission_mode }) => {
+                        if !allow_create || current_room.is_some() {
+                            let _ = tx_direct.send(ServerMessage::Error {code: "PERMISSION_DENIED".into(), message: "Create rooms from the host application".into()});
+                            continue;
+                        }
+                        let (room_arc, _code, _token, host_id) = manager.create_room(
+                            &host_name,
+                            video,
+                            permission_mode,
+                            5,
+                            now_ms,
+                        ).await;
 
-                        match client_msg {
-                            Err(e) => {
+                        let b_rx = {
+                            let mut room = room_arc.lock().await;
+                            room.participants.set_sender(&host_id, Some(tx_direct.clone()));
+                            room.broadcast_tx.subscribe()
+                        };
+
+                        let snapshot = {
+                            let room = room_arc.lock().await;
+                            room.get_snapshot(now_ms)
+                        };
+
+                        current_room = Some(room_arc);
+                        current_participant = Some(host_id);
+                        broadcast_rx = Some(b_rx);
+
+                        let _ = tx_direct.send(ServerMessage::RoomState(snapshot));
+                    }
+                    Ok(ClientMessage::RoomJoin { room_code, room_token, display_name, .. }) => {
+                        if current_room.is_some() {
+                            let _ = tx_direct.send(ServerMessage::Error {code:"SESSION_ALREADY_ACTIVE".into(),message:"Leave the current room before joining another".into()});
+                            continue;
+                        }
+                        match manager.get_room_by_code(&room_code).await {
+                            None => {
                                 let _ = tx_direct.send(ServerMessage::Error {
-                                    code: ErrorCode::InvalidMessage.as_str().to_string(),
-                                    message: format!("Malformed message: {}", e),
+                                    code: ErrorCode::RoomNotFound.as_str().to_string(),
+                                    message: format!("Room code not found: {}", room_code.as_str()),
                                 });
                             }
-                            Ok(ClientMessage::SessionIdentify) => {
-                                if let Some(id)=&current_participant {let _=tx_direct.send(ServerMessage::SessionIdentity{participant_id:id.clone()});}
-                            }
-                            Ok(ClientMessage::RoomGetState) => {
-                                if let Some(room)=&current_room {let _=tx_direct.send(ServerMessage::RoomState(room.lock().await.get_snapshot(now_ms)));}
-                            }
-                            Ok(ClientMessage::RoomCreate { host_name, video, permission_mode }) => {
-                                if !allow_create || current_room.is_some() {
-                                    let _ = tx_direct.send(ServerMessage::Error {code: "PERMISSION_DENIED".into(), message: "Create rooms from the host application".into()});
-                                    continue;
-                                }
-                                let (room_arc, _code, _token, host_id) = manager.create_room(
-                                    &host_name,
-                                    video,
-                                    permission_mode,
-                                    5,
-                                    now_ms,
-                                ).await;
-
-                                let b_rx = {
+                            Some(room_arc) => {
+                                let (join_res, b_rx) = {
                                     let mut room = room_arc.lock().await;
-                                    room.participants.set_sender(&host_id, Some(tx_direct.clone()));
-                                    room.broadcast_tx.subscribe()
-                                };
-
-                                let snapshot = {
-                                    let room = room_arc.lock().await;
-                                    room.get_snapshot(now_ms)
-                                };
-
-                                current_room = Some(room_arc);
-                                current_participant = Some(host_id);
-                                broadcast_rx = Some(b_rx);
-
-                                let _ = tx_direct.send(ServerMessage::RoomState(snapshot));
-                            }
-                            Ok(ClientMessage::RoomJoin { room_code, room_token, display_name, .. }) => {
-                                if current_room.is_some() {
-                                    let _ = tx_direct.send(ServerMessage::Error {code:"SESSION_ALREADY_ACTIVE".into(),message:"Leave the current room before joining another".into()});
-                                    continue;
-                                }
-                                match manager.get_room_by_code(&room_code).await {
-                                    None => {
-                                        let _ = tx_direct.send(ServerMessage::Error {
-                                            code: ErrorCode::RoomNotFound.as_str().to_string(),
-                                            message: format!("Room code not found: {}", room_code.as_str()),
-                                        });
-                                    }
-                                    Some(room_arc) => {
-                                        let (join_res, b_rx) = {
-                                            let mut room = room_arc.lock().await;
-                                            let res = room.join(
-                                                &room_code,
-                                                &room_token,
-                                                &display_name,
-                                                Some(tx_direct.clone()),
-                                                now_ms,
-                                            );
-                                            let rx = room.broadcast_tx.subscribe();
-                                            (res, rx)
-                                        };
-
-                                        match join_res {
-                                            Err(err) => {
-                                                let _ = tx_direct.send(ServerMessage::Error {
-                                                    code: err.to_error_code().as_str().to_string(),
-                                                    message: err.to_string(),
-                                                });
-                                            }
-                                            Ok(guest) => {
-                                                let snapshot = {
-                                                    let room = room_arc.lock().await;
-                                                    room.get_snapshot(now_ms)
-                                                };
-
-                                                current_room = Some(room_arc);
-                                                current_participant = Some(guest.id);
-                                                broadcast_rx = Some(b_rx);
-
-                                                let _ = tx_direct.send(ServerMessage::RoomState(snapshot));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Ok(ClientMessage::PlaybackPlay { revision, .. }) => {
-                                if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
-                                    let mut room = room_arc.lock().await;
-                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
-                                    if let Err(err) = room.apply_play(p_id, revision, now_ms) {
-                                        let _ = tx_direct.send(ServerMessage::Error {
-                                            code: err.to_error_code().as_str().to_string(),
-                                            message: err.to_string(),
-                                        });
-                                    }
-                                }
-                            }
-                            Ok(ClientMessage::PlaybackPause { revision, position_ms, .. }) => {
-                                if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
-                                    let mut room = room_arc.lock().await;
-                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
-                                    if let Err(err) = room.apply_pause(p_id, revision, position_ms, now_ms) {
-                                        let _ = tx_direct.send(ServerMessage::Error {
-                                            code: err.to_error_code().as_str().to_string(),
-                                            message: err.to_string(),
-                                        });
-                                    }
-                                }
-                            }
-                            Ok(ClientMessage::PlaybackSeek { revision, target_position_ms, .. }) => {
-                                if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
-                                    let mut room = room_arc.lock().await;
-                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
-                                    if let Err(err) = room.apply_seek(p_id, revision, target_position_ms, now_ms) {
-                                        let _ = tx_direct.send(ServerMessage::Error {
-                                            code: err.to_error_code().as_str().to_string(),
-                                            message: err.to_string(),
-                                        });
-                                    }
-                                }
-                            }
-                            Ok(ClientMessage::PlaybackSpeed { revision, speed, .. }) => {
-                                if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
-                                    let mut room = room_arc.lock().await;
-                                    let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
-                                    if let Err(err) = room.apply_speed(p_id, revision, speed, now_ms) {
-                                        let _ = tx_direct.send(ServerMessage::Error {
-                                            code: err.to_error_code().as_str().to_string(),
-                                            message: err.to_string(),
-                                        });
-                                    }
-                                }
-                            }
-                            Ok(ClientMessage::ParticipantStatus { buffered_position_ms, current_position_ms, is_buffering, ping_ms, .. }) => {
-                                if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
-                                    let mut room = room_arc.lock().await;
-                                    room.participants.update_status(
-                                        p_id,
-                                        buffered_position_ms,
-                                        current_position_ms,
-                                        is_buffering,
-                                        ping_ms,
+                                    let res = room.join(
+                                        &room_code,
+                                        &room_token,
+                                        &display_name,
+                                        Some(tx_direct.clone()),
                                         now_ms,
                                     );
+                                    let rx = room.broadcast_tx.subscribe();
+                                    (res, rx)
+                                };
+
+                                match join_res {
+                                    Err(err) => {
+                                        let _ = tx_direct.send(ServerMessage::Error {
+                                            code: err.to_error_code().as_str().to_string(),
+                                            message: err.to_string(),
+                                        });
+                                    }
+                                    Ok(guest) => {
+                                        let snapshot = {
+                                            let room = room_arc.lock().await;
+                                            room.get_snapshot(now_ms)
+                                        };
+
+                                        current_room = Some(room_arc);
+                                        current_participant = Some(guest.id);
+                                        broadcast_rx = Some(b_rx);
+
+                                        let _ = tx_direct.send(ServerMessage::RoomState(snapshot));
+                                    }
                                 }
                             }
-                            Ok(ClientMessage::SyncPing { ping_id, client_send_time_ms }) => {
-                                let _ = tx_direct.send(ServerMessage::SyncPong {
-                                    ping_id,
-                                    client_send_time_ms,
-                                    server_receive_time_ms: now_ms,
-                                    server_send_time_ms: now_ms,
+                        }
+                    }
+                    Ok(ClientMessage::PlaybackPlay { revision, .. }) => {
+                        if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
+                            let mut room = room_arc.lock().await;
+                            let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
+                            if let Err(err) = room.apply_play(p_id, revision, now_ms) {
+                                let _ = tx_direct.send(ServerMessage::Error {
+                                    code: err.to_error_code().as_str().to_string(),
+                                    message: err.to_string(),
                                 });
                             }
-                            Ok(ClientMessage::RoomSetPermissions { permission_mode }) => {
-                                if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
-                                    let mut room = room_arc.lock().await;
-                                    if let Err(err) = room.set_permission_mode(p_id, permission_mode) {
-                                        let _ = tx_direct.send(ServerMessage::Error {
-                                            code: err.to_error_code().as_str().to_string(),
-                                            message: err.to_string(),
-                                        });
-                                    }
-                                }
-                            }
-                            Ok(ClientMessage::ParticipantKick { target_id }) => {
-                                if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
-                                    let mut room = room_arc.lock().await;
-                                    if let Err(err) = room.kick(p_id, &target_id) {
-                                        let _ = tx_direct.send(ServerMessage::Error {
-                                            code: err.to_error_code().as_str().to_string(),
-                                            message: err.to_string(),
-                                        });
-                                    }
-                                }
-                            }
-                            Ok(ClientMessage::RoomLeave { .. }) => {
-                                if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
-                                    let mut room = room_arc.lock().await;
-                                    let _ = room.leave(p_id);
-                                }
-                                break;
+                        }
+                    }
+                    Ok(ClientMessage::PlaybackPause { revision, position_ms, .. }) => {
+                        if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
+                            let mut room = room_arc.lock().await;
+                            let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
+                            if let Err(err) = room.apply_pause(p_id, revision, position_ms, now_ms) {
+                                let _ = tx_direct.send(ServerMessage::Error {
+                                    code: err.to_error_code().as_str().to_string(),
+                                    message: err.to_string(),
+                                });
                             }
                         }
                     }
-                    Message::Ping(payload) => {
-                        if ws_sink.send(Message::Pong(payload)).await.is_err() {
-                            break;
+                    Ok(ClientMessage::PlaybackSeek { revision, target_position_ms, .. }) => {
+                        if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
+                            let mut room = room_arc.lock().await;
+                            let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
+                            if let Err(err) = room.apply_seek(p_id, revision, target_position_ms, now_ms) {
+                                let _ = tx_direct.send(ServerMessage::Error {
+                                    code: err.to_error_code().as_str().to_string(),
+                                    message: err.to_string(),
+                                });
+                            }
                         }
                     }
-                    Message::Close(_) => {
+                    Ok(ClientMessage::PlaybackSpeed { revision, speed, .. }) => {
+                        if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
+                            let mut room = room_arc.lock().await;
+                            let revision = if !allow_create { room.playback.revision.saturating_add(1) } else { revision };
+                            if let Err(err) = room.apply_speed(p_id, revision, speed, now_ms) {
+                                let _ = tx_direct.send(ServerMessage::Error {
+                                    code: err.to_error_code().as_str().to_string(),
+                                    message: err.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    Ok(ClientMessage::ParticipantStatus { buffered_position_ms, current_position_ms, is_buffering, ping_ms, .. }) => {
+                        if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
+                            let mut room = room_arc.lock().await;
+                            room.participants.update_status(
+                                p_id,
+                                buffered_position_ms,
+                                current_position_ms,
+                                is_buffering,
+                                ping_ms,
+                                now_ms,
+                            );
+                        }
+                    }
+                    Ok(ClientMessage::SyncPing { ping_id, client_send_time_ms }) => {
+                        let _ = tx_direct.send(ServerMessage::SyncPong {
+                            ping_id,
+                            client_send_time_ms,
+                            server_receive_time_ms: now_ms,
+                            server_send_time_ms: now_ms,
+                        });
+                    }
+                    Ok(ClientMessage::RoomSetPermissions { permission_mode }) => {
+                        if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
+                            let mut room = room_arc.lock().await;
+                            if let Err(err) = room.set_permission_mode(p_id, permission_mode) {
+                                let _ = tx_direct.send(ServerMessage::Error {
+                                    code: err.to_error_code().as_str().to_string(),
+                                    message: err.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    Ok(ClientMessage::ParticipantKick { target_id }) => {
+                        if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
+                            let mut room = room_arc.lock().await;
+                            if let Err(err) = room.kick(p_id, &target_id) {
+                                let _ = tx_direct.send(ServerMessage::Error {
+                                    code: err.to_error_code().as_str().to_string(),
+                                    message: err.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    Ok(ClientMessage::RoomLeave { .. }) => {
+                        if let (Some(room_arc), Some(p_id)) = (&current_room, &current_participant) {
+                            let mut room = room_arc.lock().await;
+                            let _ = room.leave(p_id);
+                        }
                         break;
                     }
-                    _ => {}
                 }
             }
         }

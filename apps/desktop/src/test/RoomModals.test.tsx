@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { CreateRoomModal } from '../features/rooms/CreateRoomModal';
 import { JoinRoomModal } from '../features/rooms/JoinRoomModal';
+import { createConnectionCode } from '../utils/deepLink';
 import { ParticipantRosterPopover } from '../features/rooms/ParticipantRosterPopover';
 import { RoomStateSnapshot } from '../types/room';
 
@@ -16,6 +17,7 @@ describe('Room Collaboration UI Modals', () => {
           onClose={onClose}
           roomCode="K7M2P9"
           roomToken="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          hostAddr="eyJpIjoiaG9zdCJ9"
           initialHostName="Alice"
           isLoading={false}
           onCreateRoom={vi.fn()}
@@ -25,7 +27,10 @@ describe('Room Collaboration UI Modals', () => {
 
       expect(screen.getByTestId('room-code-display')).toHaveTextContent('K7M2P9');
 
-      fireEvent.change(screen.getByTestId('host-address-input'), {target:{value:'192.168.1.25:8999'}});
+      expect(screen.queryByTestId('host-address-input')).not.toBeInTheDocument();
+      expect(screen.getByTestId('shareable-link-input')).toHaveValue(
+        'watchtogether://join/K7M2P9?token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&host=eyJpIjoiaG9zdCJ9'
+      );
       const copyBtn = screen.getByTestId('copy-code-btn');
       await act(async () => {
         fireEvent.click(copyBtn);
@@ -39,10 +44,25 @@ describe('Room Collaboration UI Modals', () => {
     it('passes the host address from a complete invitation to the connection command', async () => {
       const join = vi.fn().mockResolvedValue({});
       render(<JoinRoomModal isOpen onClose={vi.fn()} initialDisplayName="Bob" isLoading={false} error={null} onJoinRoom={join} />);
-      fireEvent.change(screen.getByTestId('room-code-input'), {target:{value:'watchtogether://join/K7M2P9?token='+'a'.repeat(64)+'&host=203.0.113.4%3A8999'}});
-      expect(screen.getByTestId('join-host-address-input')).toHaveValue('203.0.113.4:8999');
+      fireEvent.change(screen.getByTestId('room-code-input'), {target:{value:createConnectionCode('K7M2P9','a'.repeat(64),'eyJpIjoiaG9zdCJ9')}});
+      expect(screen.queryByTestId('join-host-address-input')).not.toBeInTheDocument();
+      expect(screen.getByTestId('host-found-hint')).toBeInTheDocument();
       await act(async () => { fireEvent.click(screen.getByTestId('join-room-submit-btn')); });
-      expect(join).toHaveBeenCalledWith('K7M2P9','a'.repeat(64),'Bob','203.0.113.4:8999');
+      expect(join).toHaveBeenCalledWith('K7M2P9','a'.repeat(64),'Bob','eyJpIjoiaG9zdCJ9');
+    });
+    it('explains that a short room code alone cannot reach the host', async () => {
+      const join = vi.fn().mockResolvedValue({});
+      render(<JoinRoomModal isOpen onClose={vi.fn()} initialDisplayName="Bob" isLoading={false} error={null} onJoinRoom={join} />);
+      fireEvent.change(screen.getByTestId('room-code-input'), {target:{value:'K7M2P9'}});
+      fireEvent.change(screen.getByTestId('room-token-input'), {target:{value:'a'.repeat(64)}});
+      await act(async () => { fireEvent.click(screen.getByTestId('join-room-submit-btn')); });
+      expect(join).not.toHaveBeenCalled();
+      expect(screen.getByTestId('join-error-banner')).toHaveTextContent('complete invitation');
+    });
+    it('rejects IP-based invitations from older versions with a clear message', () => {
+      render(<JoinRoomModal isOpen onClose={vi.fn()} initialDisplayName="Bob" isLoading={false} error={null} onJoinRoom={vi.fn()} />);
+      fireEvent.change(screen.getByTestId('room-code-input'), {target:{value:'WT1-eyJyb29tQ29kZSI6IksifQ'}});
+      expect(screen.getByTestId('join-error-banner')).toHaveTextContent('older version');
     });
     it('normalizes room code input to uppercase', () => {
       render(

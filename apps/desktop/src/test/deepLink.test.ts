@@ -3,9 +3,15 @@ import { createShareableLink, createConnectionCode, parseJoinInput } from '../ut
 
 describe('Deep Link Utilities', () => {
   it('round-trips a complete connection code without a directory server', () => {
-    const code = createConnectionCode('K7M2P9', 'a'.repeat(64), '192.168.1.25:8999');
-    expect(parseJoinInput(code)).toEqual({roomCode:'K7M2P9',roomToken:'a'.repeat(64),hostAddr:'192.168.1.25:8999',isUrl:true});
-    expect(parseJoinInput('WT1-broken').roomCode).toBe('');
+    const code = createConnectionCode('K7M2P9', 'a'.repeat(64), 'eyJpIjoiaG9zdCJ9');
+    expect(code.startsWith('WT2-')).toBe(true);
+    expect(parseJoinInput(code)).toEqual({roomCode:'K7M2P9',roomToken:'a'.repeat(64),hostAddr:'eyJpIjoiaG9zdCJ9',isUrl:true});
+    // chat apps and terminals may wrap a long code across lines
+    expect(parseJoinInput(code.slice(0, 30) + '\n' + code.slice(30)).roomCode).toBe('K7M2P9');
+    expect(parseJoinInput('WT2-broken').roomCode).toBe('');
+  });
+  it('flags IP-based WT1 invitations from older versions', () => {
+    expect(parseJoinInput('WT1-eyJyb29tQ29kZSI6IksifQ')).toEqual({roomCode:'',isUrl:true,isLegacy:true});
   });
   it('preserves host endpoint and credentials in an invitation', () => {
     const link = createShareableLink('K7M2P9', 'a'.repeat(64), '203.0.113.4:8999');

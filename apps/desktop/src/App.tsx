@@ -220,6 +220,7 @@ export function App() {
         onClose={() => setIsCreateModalOpen(false)}
         roomCode={room.roomCode}
         roomToken={room.roomToken}
+        hostAddr={room.hostAddr}
         initialHostName={settings.displayName}
         isLoading={room.isLoading}
         error={room.error}

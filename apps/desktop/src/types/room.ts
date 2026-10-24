@@ -60,6 +60,8 @@ export interface RoomCreateResponse {
   room_id: string;
   room_code: string;
   room_token: string;
+  /** iroh address of the host computer, embedded in invitations. */
+  host_addr: string;
 }
 
 export interface RoomJoinResponse {

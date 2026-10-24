@@ -3,7 +3,10 @@ use crate::{
     events::{EventSinkExt, RoomErrorPayload, RoomUpdatePayload},
     AppError, AppState,
 };
-use network::local_sync::{LocalSession, SessionEvent};
+use network::{
+    iroh_transport::Relays,
+    local_sync::{LocalSession, SessionEvent},
+};
 use serde::Serialize;
 use shared_protocol::{ClientMessage, PermissionMode, RoomStateSnapshot};
 use std::sync::Arc;
@@ -13,7 +16,8 @@ pub struct CreateResponse {
     pub room_id: String,
     pub room_code: String,
     pub room_token: String,
-    pub server_port: u16,
+    /// iroh ticket guests use to reach this computer; goes into the invitation.
+    pub host_addr: String,
 }
 pub async fn create(
     state: &AppState,
@@ -27,7 +31,7 @@ pub async fn create(
     }
     let session = LocalSession::host(
         state.player.clone(),
-        "0.0.0.0:8999".parse().unwrap(),
+        &Relays::from_env(),
         name.unwrap_or_else(|| "Host".into()),
         mode.unwrap_or(PermissionMode::FreeControl),
     )
@@ -38,7 +42,7 @@ pub async fn create(
         room_id: s.room_id.to_string(),
         room_code: s.room_code.to_string(),
         room_token: session.token.clone(),
-        server_port: session.listen_addr.unwrap().port(),
+        host_addr: session.host_ticket.clone(),
     };
     watch(state, &session).await;
     *live = Some(session);
@@ -57,6 +61,7 @@ pub async fn join(
     }
     let session = LocalSession::join(
         state.player.clone(),
+        &Relays::from_env(),
         host.as_deref().unwrap_or(""),
         &code,
         &token,

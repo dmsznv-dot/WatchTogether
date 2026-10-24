@@ -14,6 +14,7 @@ export function useRoom() {
   const [sessionType, setSessionType] = useState<SessionType>('none');
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [roomToken, setRoomToken] = useState<string | null>(null);
+  const [hostAddr, setHostAddr] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<RoomStateSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +34,7 @@ export function useRoom() {
         setSnapshot(payload.snapshot || null);
         if (payload.session_type === 'none') {
           setRoomToken(null);
+          setHostAddr(null);
         }
       })
       .then((fn) => {
@@ -84,6 +86,7 @@ export function useRoom() {
         setSessionType('host');
         setRoomCode(res.room_code);
         setRoomToken(res.room_token);
+        setHostAddr(res.host_addr);
         return res;
       } catch (err: any) {
         const msg = err?.message || String(err);
@@ -130,6 +133,7 @@ export function useRoom() {
       setSessionType('none');
       setRoomCode(null);
       setRoomToken(null);
+      setHostAddr(null);
       setSnapshot(null);
     } catch (err: any) {
       setError(err?.message || String(err));
@@ -175,6 +179,7 @@ export function useRoom() {
     sessionType,
     roomCode,
     roomToken,
+    hostAddr,
     snapshot,
     isHost,
     isGuest,

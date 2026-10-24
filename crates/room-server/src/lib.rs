@@ -16,7 +16,7 @@ pub use room::{
     generate_room_code, generate_room_token, is_valid_playback_speed, Room,
     ALLOWED_PLAYBACK_SPEEDS, CROCKFORD_CHARSET,
 };
-pub use server::{current_time_ms, RoomManager, RoomServer, RoomServerHandle};
+pub use server::{current_time_ms, serve_connection, RoomManager, RoomServer, RoomServerHandle};
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

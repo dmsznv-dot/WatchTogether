@@ -4,12 +4,11 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Network connectivity, STUN/TURN, ICE, and P2P transport for Watch Together"
+description = "Network connectivity and iroh (QUIC, NAT traversal, relay) room transport for Watch Together"
 
 [dependencies]
 media-engine = { workspace = true }
 room-server = { workspace = true }
-tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 futures-util = { workspace = true }
 shared-protocol = { workspace = true }
 sync-engine = { workspace = true }
@@ -25,6 +24,9 @@ thiserror = { workspace = true }
 rand = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
+iroh = { workspace = true }
+data-encoding = { workspace = true }
+tokio-util = { workspace = true, features = ["codec"] }
 
 [dev-dependencies]
 media-stream = { workspace = true }

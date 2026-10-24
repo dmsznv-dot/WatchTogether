@@ -1,13 +1,14 @@
 //! Self-hosted rooms with independent local files. No media bytes are served.
+//! The host keeps the room state; guests reach it over iroh (see [`crate::iroh_transport`]).
+use crate::iroh_transport::{RoomHost, RoomLink, Relays};
 use futures_util::{SinkExt, StreamExt};
 use media_engine::MediaPlayer;
-use room_server::{RoomManager, RoomServer, RoomServerHandle};
+use room_server::RoomManager;
 use shared_protocol::{
     ClientMessage, PermissionMode, PlaybackState, PlaybackStatus, RoomCode, RoomStateSnapshot,
     RoomToken, ServerMessage, VideoMetadata,
 };
 use std::{
-    net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -15,7 +16,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{broadcast, mpsc};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+/// Waiting for the host includes NAT traversal and, if needed, the relay.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn now() -> u64 {
     SystemTime::now()
@@ -31,14 +34,15 @@ pub enum SessionEvent {
 }
 pub struct LocalSession {
     pub is_host: bool,
-    pub endpoint: String,
-    pub listen_addr: Option<SocketAddr>,
+    /// How guests reach the host: an iroh ticket (see [`crate::iroh_transport::encode_ticket`]).
+    pub host_ticket: String,
     pub token: String,
     pub participant_id: String,
     snapshot: Arc<Mutex<RoomStateSnapshot>>,
     player: Arc<dyn MediaPlayer>,
     manager: Option<Arc<RoomManager>>,
-    server: Mutex<Option<RoomServerHandle>>,
+    host: Mutex<Option<RoomHost>>,
+    guest_endpoint: Option<iroh::Endpoint>,
     commands: Option<mpsc::Sender<ClientMessage>>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     connected: Arc<AtomicBool>,
@@ -60,7 +64,7 @@ impl LocalSession {
 
     pub async fn host(
         player: Arc<dyn MediaPlayer>,
-        addr: SocketAddr,
+        relays: &Relays,
         name: String,
         mode: PermissionMode,
     ) -> Result<Arc<Self>, String> {
@@ -93,36 +97,19 @@ impl LocalSession {
             };
             r.broadcast_tx.subscribe()
         };
-        let server = RoomServer::start_existing(addr, manager.clone())
-            .await
-            .map_err(|e| format!("Cannot start room server on {addr}: {e}"))?;
-        let listen = server.local_addr;
-        let host = if listen.ip().is_unspecified() {
-            "127.0.0.1".into()
-        } else {
-            listen.ip().to_string()
-        };
-        let endpoint = format!(
-            "ws://{}:{}/ws",
-            if host.contains(':') {
-                format!("[{host}]")
-            } else {
-                host
-            },
-            listen.port()
-        );
+        let room_host = RoomHost::start(manager.clone(), relays).await?;
         let initial = room.lock().await.get_snapshot(now());
         let (events, _) = broadcast::channel(64);
         let session = Arc::new(Self {
             is_host: true,
-            endpoint,
-            listen_addr: Some(listen),
+            host_ticket: room_host.ticket(),
             token: token.to_string(),
             participant_id: initial.host_id.to_string(),
             snapshot: Arc::new(Mutex::new(initial)),
             player: player.clone(),
             manager: Some(manager),
-            server: Mutex::new(Some(server)),
+            host: Mutex::new(Some(room_host)),
+            guest_endpoint: None,
             commands: None,
             tasks: Mutex::new(Vec::new()),
             connected: Arc::new(AtomicBool::new(true)),
@@ -157,7 +144,8 @@ impl LocalSession {
 
     pub async fn join(
         player: Arc<dyn MediaPlayer>,
-        endpoint: &str,
+        relays: &Relays,
+        host_ticket: &str,
         code: &str,
         token: &str,
         name: String,
@@ -174,41 +162,26 @@ impl LocalSession {
         if local.current_file.is_none() || local.duration_ms == 0 {
             return Err("Open your own copy of the movie before joining".into());
         }
-        let endpoint = normalize_endpoint(endpoint)?;
-        let operation = async {
-            let (mut socket, _) = connect_async(&endpoint).await.map_err(|e| {
-                format!("Cannot connect to host: {e}. Check the address, TCP port and firewall.")
-            })?;
-            socket
-                .send(Message::Text(
-                    serde_json::to_string(&ClientMessage::RoomJoin {
-                        room_code: code.clone(),
-                        room_token: token.clone(),
-                        display_name: name,
-                        participant_id: None,
-                    })
-                    .unwrap(),
-                ))
+        let mut link = RoomLink::connect(host_ticket, relays, CONNECT_TIMEOUT).await?;
+        let handshake = async {
+            let send = |message: &ClientMessage| serde_json::to_string(message).unwrap();
+            link.outbound
+                .send(send(&ClientMessage::RoomJoin {
+                    room_code: code.clone(),
+                    room_token: token.clone(),
+                    display_name: name,
+                    participant_id: None,
+                }))
                 .await
                 .map_err(|e| e.to_string())?;
             let snapshot = loop {
-                match socket.next().await {
-                    Some(Ok(Message::Text(text))) => {
-                        match serde_json::from_str::<ServerMessage>(&text)
-                            .map_err(|e| e.to_string())?
-                        {
-                            ServerMessage::RoomState(s) => break s,
-                            ServerMessage::Error { message, .. } => return Err(message),
-                            _ => {}
-                        }
-                    }
-                    Some(Ok(Message::Ping(data))) => {
-                        socket
-                            .send(Message::Pong(data))
-                            .await
-                            .map_err(|e| e.to_string())?;
-                    }
-                    _ => return Err("Host disconnects before completing the room handshake".into()),
+                let Some(text) = link.inbound.next().await else {
+                    return Err("Host disconnects before completing the room handshake".into());
+                };
+                match serde_json::from_str::<ServerMessage>(&text).map_err(|e| e.to_string())? {
+                    ServerMessage::RoomState(s) => break s,
+                    ServerMessage::Error { message, .. } => return Err(message),
+                    _ => {}
                 }
             };
             // Different filenames are allowed; different cuts/durations are not silently synced.
@@ -219,52 +192,49 @@ impl LocalSession {
                     snapshot.video.duration_ms / 1000
                 ));
             }
-            socket
-                .send(Message::Text(
-                    serde_json::to_string(&ClientMessage::SessionIdentify).unwrap(),
-                ))
+            link.outbound
+                .send(send(&ClientMessage::SessionIdentify))
                 .await
                 .map_err(|e| e.to_string())?;
             let participant_id = loop {
-                match socket.next().await {
-                    Some(Ok(Message::Text(text))) => {
-                        if let ServerMessage::SessionIdentity { participant_id } =
-                            serde_json::from_str::<ServerMessage>(&text)
-                                .map_err(|e| e.to_string())?
-                        {
-                            break participant_id.to_string();
-                        }
-                    }
-                    Some(Ok(Message::Ping(data))) => {
-                        socket
-                            .send(Message::Pong(data))
-                            .await
-                            .map_err(|e| e.to_string())?;
-                    }
-                    _ => return Err("Host does not confirm participant identity".into()),
+                let Some(text) = link.inbound.next().await else {
+                    return Err("Host does not confirm participant identity".into());
+                };
+                if let ServerMessage::SessionIdentity { participant_id } =
+                    serde_json::from_str::<ServerMessage>(&text).map_err(|e| e.to_string())?
+                {
+                    break participant_id.to_string();
                 }
             };
-            Ok((socket, snapshot, participant_id))
+            Ok((snapshot, participant_id))
         };
-        let (mut socket, snapshot, participant_id) =
-            tokio::time::timeout(Duration::from_secs(10), operation)
-                .await
-                .map_err(|_| {
-                    "Host does not respond. Check the public address, TCP port forwarding or VPN."
-                        .to_string()
-                })??;
+        let handshake = tokio::time::timeout(Duration::from_secs(10), handshake)
+            .await
+            .unwrap_or_else(|_| Err("Host does not answer the room handshake".into()));
+        let (snapshot, participant_id) = match handshake {
+            Ok(done) => done,
+            Err(e) => {
+                link.endpoint.close().await;
+                return Err(e);
+            }
+        };
+        let RoomLink {
+            endpoint: guest_endpoint,
+            outbound: mut socket,
+            inbound: mut incoming,
+        } = link;
         let (tx, mut commands) = mpsc::channel::<ClientMessage>(32);
         let (events, _) = broadcast::channel(64);
         let session = Arc::new(Self {
             is_host: false,
-            endpoint,
-            listen_addr: None,
+            host_ticket: host_ticket.trim().to_string(),
             token: token.to_string(),
             participant_id: participant_id.clone(),
             snapshot: Arc::new(Mutex::new(snapshot)),
             player: player.clone(),
             manager: None,
-            server: Mutex::new(None),
+            host: Mutex::new(None),
+            guest_endpoint: Some(guest_endpoint.clone()),
             commands: Some(tx),
             tasks: Mutex::new(Vec::new()),
             connected: Arc::new(AtomicBool::new(true)),
@@ -281,50 +251,45 @@ impl LocalSession {
             let result:Result<(),String>=async {
                 loop {
                     tokio::select! {
-                        command=commands.recv()=>{let Some(c)=command else{break};socket.send(Message::Text(serde_json::to_string(&c).unwrap())).await.map_err(|e|e.to_string())?;},
+                        command=commands.recv()=>{let Some(c)=command else{break};socket.send(serde_json::to_string(&c).unwrap()).await.map_err(|e|e.to_string())?;},
                         _=tick.tick()=>{
                             if last.elapsed()>Duration::from_secs(15){return Err("Connection to host lost".into())}
                             count+=1;
                             if count%4==1 {
-                                for c in [ClientMessage::SyncPing{ping_id:count,client_send_time_ms:now()},ClientMessage::RoomGetState] {socket.send(Message::Text(serde_json::to_string(&c).unwrap())).await.map_err(|e|e.to_string())?;}
+                                for c in [ClientMessage::SyncPing{ping_id:count,client_send_time_ms:now()},ClientMessage::RoomGetState] {socket.send(serde_json::to_string(&c).unwrap()).await.map_err(|e|e.to_string())?;}
                             }
                             if let Some(server_now)=clock.estimate_server_time(now()) {let p=shared.lock().unwrap().playback.clone();synchronize(&*player,&p,server_now,false)?;}
                         },
-                        message=socket.next()=>{
-                            let Some(Ok(message))=message else{return Err("Host disconnects".into())};last=tokio::time::Instant::now();
-                            match message {
-                                Message::Ping(data)=>socket.send(Message::Pong(data)).await.map_err(|e|e.to_string())?,
-                                Message::Close(_)=>break,
-                                Message::Text(text)=>{
-                                    let event=serde_json::from_str::<ServerMessage>(&text).map_err(|e|e.to_string())?;
-                                    let mut force=false;
-                                    match event {
-                                        ServerMessage::RoomClosed{..}=>break,
-                                        ServerMessage::ParticipantKicked{participant_id:id,..} if id.as_str()==participant_id=>break,
-                                        ServerMessage::SessionIdentity{..}=>{},
-                                        ServerMessage::SyncPong{client_send_time_ms,server_receive_time_ms,server_send_time_ms,..}=>{let _=clock.record_measurement(&sync_engine::NtpMeasurement{t0_client_send:client_send_time_ms,t1_server_recv:server_receive_time_ms,t2_server_send:server_send_time_ms,t3_client_recv:now()});},
-                                        ServerMessage::Error{message,..}=>{let _=events.send(SessionEvent::Error(message));},
-                                        other=>{
-                                            let mut s=shared.lock().unwrap();
-                                            match other {
-                                                ServerMessage::RoomState(snapshot)=>{force=accept_snapshot(&mut s,snapshot);},
-                                                ServerMessage::PlaybackUpdated{revision,status,position_ms,speed,updated_at_server_ms,..}=>{if revision>s.playback.revision {s.playback=PlaybackState{revision,status,position_ms,speed,updated_at_server_ms,duration_ms:s.video.duration_ms};force=true;}},
-                                                ServerMessage::ParticipantJoined(p)=>{s.participants.retain(|old|old.id!=p.id);s.participants.push(p);},
-                                                ServerMessage::ParticipantLeft{participant_id,..}|ServerMessage::ParticipantKicked{participant_id,..}=>s.participants.retain(|p|p.id!=participant_id),
-                                                _=>{}
-                                            }
-                                            let _=events.send(SessionEvent::Update(s.clone()));
-                                        }
+                        text=incoming.next()=>{
+                            let Some(text)=text else{return Err("Host disconnects".into())};last=tokio::time::Instant::now();
+                            let event=serde_json::from_str::<ServerMessage>(&text).map_err(|e|e.to_string())?;
+                            let mut force=false;
+                            match event {
+                                ServerMessage::RoomClosed{..}=>break,
+                                ServerMessage::ParticipantKicked{participant_id:id,..} if id.as_str()==participant_id=>break,
+                                ServerMessage::SessionIdentity{..}=>{},
+                                ServerMessage::SyncPong{client_send_time_ms,server_receive_time_ms,server_send_time_ms,..}=>{let _=clock.record_measurement(&sync_engine::NtpMeasurement{t0_client_send:client_send_time_ms,t1_server_recv:server_receive_time_ms,t2_server_send:server_send_time_ms,t3_client_recv:now()});},
+                                ServerMessage::Error{message,..}=>{let _=events.send(SessionEvent::Error(message));},
+                                other=>{
+                                    let mut s=shared.lock().unwrap();
+                                    match other {
+                                        ServerMessage::RoomState(snapshot)=>{force=accept_snapshot(&mut s,snapshot);},
+                                        ServerMessage::PlaybackUpdated{revision,status,position_ms,speed,updated_at_server_ms,..}=>{if revision>s.playback.revision {s.playback=PlaybackState{revision,status,position_ms,speed,updated_at_server_ms,duration_ms:s.video.duration_ms};force=true;}},
+                                        ServerMessage::ParticipantJoined(p)=>{s.participants.retain(|old|old.id!=p.id);s.participants.push(p);},
+                                        ServerMessage::ParticipantLeft{participant_id,..}|ServerMessage::ParticipantKicked{participant_id,..}=>s.participants.retain(|p|p.id!=participant_id),
+                                        _=>{}
                                     }
-                                    if let Some(server_now)=clock.estimate_server_time(now()) {let p=shared.lock().unwrap().playback.clone();synchronize(&*player,&p,server_now,force)?;}
-                                },_=>{}
+                                    let _=events.send(SessionEvent::Update(s.clone()));
+                                }
                             }
+                            if let Some(server_now)=clock.estimate_server_time(now()) {let p=shared.lock().unwrap().playback.clone();synchronize(&*player,&p,server_now,force)?;}
                         }
                     }
                 }
                 Ok(())
             }.await;
             connected.store(false, Ordering::Release);
+            guest_endpoint.close().await;
             let _ = player.pause();
             if let Err(e) = result {
                 let _ = events.send(SessionEvent::Error(e));
@@ -411,9 +376,12 @@ impl LocalSession {
         for task in self.tasks.lock().unwrap().drain(..) {
             task.abort();
         }
-        let server = self.server.lock().unwrap().take();
-        if let Some(server) = server {
-            let _ = tokio::time::timeout(Duration::from_secs(2), server.shutdown()).await;
+        let host = self.host.lock().unwrap().take();
+        if let Some(host) = host {
+            host.shutdown().await;
+        }
+        if let Some(endpoint) = &self.guest_endpoint {
+            let _ = tokio::time::timeout(Duration::from_secs(2), endpoint.close()).await;
         }
         let _ = self.player.pause();
         let _ = self.events.send(SessionEvent::Disconnected);
@@ -424,9 +392,8 @@ impl Drop for LocalSession {
         for task in self.tasks.get_mut().unwrap().drain(..) {
             task.abort();
         }
-        if let Some(server) = self.server.get_mut().unwrap().take() {
-            server.join_handle.abort();
-        }
+        // Dropping the host disconnects its guests (see RoomHost's Drop).
+        self.host.get_mut().unwrap().take();
     }
 }
 fn synchronize(
@@ -463,42 +430,6 @@ fn synchronize(
     }
     Ok(())
 }
-pub fn normalize_endpoint(raw: &str) -> Result<String, String> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return Err("Enter the host address or paste a complete invitation".into());
-    }
-    if raw.len() > 2048 || raw.contains(['?', '#', '@']) {
-        return Err("Invalid server address".into());
-    }
-    let endpoint = if raw.starts_with("ws://") || raw.starts_with("wss://") {
-        raw.to_owned()
-    } else {
-        format!("ws://{raw}")
-    };
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    let request = endpoint
-        .clone()
-        .into_client_request()
-        .map_err(|e| e.to_string())?;
-    if request.uri().host().is_none() {
-        return Err("Invalid host address".into());
-    }
-    let suffix = request.uri().path();
-    if suffix != "/" && suffix != "/ws" {
-        return Err("Server path must be /ws".into());
-    }
-    let authority = request.uri().authority().ok_or("Missing host")?;
-    if request.uri().port_u16().is_none() && !endpoint.starts_with("wss://") {
-        return Ok(format!("ws://{authority}:8999/ws"));
-    }
-    if suffix == "/" {
-        Ok(format!("{}/ws", endpoint.trim_end_matches('/')))
-    } else {
-        Ok(endpoint)
-    }
-}
-
 // Direct polling replies and broadcasts have independent queues. Never roll back
 // a newer timeline when a previously queued polling response arrives late.
 fn accept_snapshot(current: &mut RoomStateSnapshot, incoming: RoomStateSnapshot) -> bool {

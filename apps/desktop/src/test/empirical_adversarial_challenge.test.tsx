@@ -8,7 +8,7 @@ import {
   generateMockRoomCode,
   CROCKFORD_CHARSET,
 } from '../utils/crockford';
-import { parseJoinInput, createShareableLink } from '../utils/deepLink';
+import { parseJoinInput, createShareableLink, createConnectionCode } from '../utils/deepLink';
 import { JoinRoomModal } from '../features/rooms/JoinRoomModal';
 import { ParticipantRosterPopover } from '../features/rooms/ParticipantRosterPopover';
 import { ControlsHUD } from '../features/player/ControlsHUD';
@@ -579,10 +579,10 @@ describe('Milestone 4 Empirical Adversarial Verification Suite', () => {
       const tokenInput = screen.getByTestId('room-token-input');
       const submitBtn = screen.getByTestId('join-room-submit-btn');
 
-      fireEvent.change(codeInput, { target: { value: 'K7M2P9' } });
-      fireEvent.change(screen.getByTestId('join-host-address-input'), {target:{value:'127.0.0.1:8999'}});
-      fireEvent.change(tokenInput, {
-        target: { value: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' },
+      fireEvent.change(codeInput, {
+        target: {
+          value: createConnectionCode('K7M2P9', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'eyJpIjoiaG9zdCJ9'),
+        },
       });
 
       await act(async () => {

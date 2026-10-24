@@ -7,7 +7,12 @@ import {
   isValidRoomCode,
   normalizeRoomCode,
 } from '../../utils/crockford';
-import { parseJoinInput } from '../../utils/deepLink';
+import { CONNECTION_CODE_PREFIX, parseJoinInput } from '../../utils/deepLink';
+
+const LEGACY_INVITATION_ERROR =
+  'This invitation is from an older version of Watch Together. Ask the host to update the app and send a new invitation.';
+const MISSING_HOST_ERROR =
+  'Paste the complete invitation (connection code or link) from the host. The short room code alone cannot locate the host computer.';
 
 export interface JoinRoomModalProps {
   isOpen: boolean;
@@ -40,7 +45,7 @@ export function JoinRoomModal({
     setCodeOrUrl(parsed.roomCode);
     setToken(parsed.roomToken || '');
     setHostAddr(parsed.hostAddr || '');
-    setLocalError(null);
+    setLocalError(parsed.isLegacy ? LEGACY_INVITATION_ERROR : null);
   }, [initialInvitation]);
 
   const forbiddenChars = getForbiddenCrockfordChars(codeOrUrl);
@@ -49,9 +54,14 @@ export function JoinRoomModal({
     const raw = e.target.value;
     setLocalError(null);
 
-    // If a full deep link is pasted:
-    if (raw.trim().startsWith('watchtogether://') || raw.trim().startsWith('WT1-')) {
+    // If a full deep link or connection code is pasted:
+    const pasted = raw.trim();
+    if (pasted.startsWith('watchtogether://') || pasted.startsWith(CONNECTION_CODE_PREFIX) || pasted.startsWith('WT1-')) {
       const parsed = parseJoinInput(raw);
+      if (parsed.isLegacy) {
+        setLocalError(LEGACY_INVITATION_ERROR);
+        return;
+      }
       setHostAddr(parsed.hostAddr || '');
       setCodeOrUrl(parsed.roomCode);
       if (parsed.roomToken) {
@@ -76,7 +86,7 @@ export function JoinRoomModal({
       return;
     }
 
-    if (!hostAddr.trim()) { setLocalError('Provide the host address or paste a complete invitation.'); return; }
+    if (!hostAddr.trim()) { setLocalError(MISSING_HOST_ERROR); return; }
     try {
       await onJoinRoom(sanitizedCode, token.trim(), displayName.trim() || 'Guest', hostAddr.trim());
       onClose();
@@ -107,14 +117,14 @@ export function JoinRoomModal({
 
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
-            Room Code or Shareable Link
+            Connection Code or Link
           </label>
           <input
             type="text"
             value={codeOrUrl}
             onChange={handleCodeOrUrlChange}
-            placeholder="e.g. K7M2P9 or watchtogether://..."
-            maxLength={2048}
+            placeholder="WT2-... or watchtogether://..."
+            maxLength={4096}
             className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 font-mono tracking-wider text-base text-zinc-100 placeholder-zinc-500 uppercase focus:outline-none focus:border-indigo-500"
             data-testid="room-code-input"
           />
@@ -128,9 +138,11 @@ export function JoinRoomModal({
           )}
         </div>
 
-        <label className="text-xs text-zinc-400">Host address
-          <input data-testid="join-host-address-input" value={hostAddr} onChange={e => setHostAddr(e.target.value)} placeholder="IP or hostname:8999" className="mt-1 w-full p-2 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100" />
-        </label>
+        {hostAddr && (
+          <p data-testid="host-found-hint" className="text-[11px] text-emerald-400 -mt-2">
+            Host address found in the invitation — no IP or port needed.
+          </p>
+        )}
 
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">

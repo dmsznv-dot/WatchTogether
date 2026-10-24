@@ -1,4 +1,5 @@
 use media_engine::{HeadlessPlayer, MediaPlayer};
+use network::iroh_transport::{encode_ticket, Relays, RoomLink};
 use network::local_sync::LocalSession;
 use shared_protocol::{ClientMessage, PermissionMode};
 use std::{sync::Arc, time::Duration};
@@ -20,7 +21,7 @@ async fn two_local_copies_follow_play_seek_pause_without_streaming() {
     windows.open_file("C:\\Movies\\movie.mkv").unwrap();
     let host = LocalSession::host(
         mac.clone(),
-        "127.0.0.1:0".parse().unwrap(),
+        &Relays::Disabled,
         "Mac".into(),
         PermissionMode::FreeControl,
     )
@@ -28,7 +29,8 @@ async fn two_local_copies_follow_play_seek_pause_without_streaming() {
     .unwrap();
     let guest = LocalSession::join(
         windows.clone(),
-        &host.endpoint,
+        &Relays::Disabled,
+        &host.host_ticket,
         &host.room_code(),
         &host.token,
         "Windows".into(),
@@ -82,35 +84,41 @@ async fn two_local_copies_follow_play_seek_pause_without_streaming() {
 async fn unreachable_host_does_not_create_a_guest_session() {
     let player = Arc::new(HeadlessPlayer::new());
     player.open_file("movie.mkv").unwrap();
-    assert!(LocalSession::join(
-        player,
-        "ws://127.0.0.1:1/ws",
-        "K7M2P9",
-        &"a".repeat(64),
-        "Guest".into()
-    )
-    .await
-    .is_err());
+    let nobody = iroh::EndpointAddr::new(iroh::SecretKey::generate().public());
+    for ticket in [encode_ticket(&nobody), "damaged".to_string(), String::new()] {
+        let started = std::time::Instant::now();
+        assert!(LocalSession::join(
+            player.clone(),
+            &Relays::Disabled,
+            &ticket,
+            "K7M2P9",
+            &"a".repeat(64),
+            "Guest".into()
+        )
+        .await
+        .is_err());
+        assert!(started.elapsed() < Duration::from_secs(5), "an unusable ticket must fail fast");
+    }
 }
 
 #[tokio::test]
-async fn host_only_blocks_guest_controls_and_close_releases_port() {
+async fn host_only_blocks_guest_controls_and_close_disconnects_guest() {
     let a = Arc::new(HeadlessPlayer::new());
     a.open_file("movie.mkv").unwrap();
     let b = Arc::new(HeadlessPlayer::new());
     b.open_file("movie.mkv").unwrap();
     let host = LocalSession::host(
         a,
-        "127.0.0.1:0".parse().unwrap(),
+        &Relays::Disabled,
         "Host".into(),
         PermissionMode::HostOnly,
     )
     .await
     .unwrap();
-    let addr = host.listen_addr.unwrap();
     let guest = LocalSession::join(
         b,
-        &host.endpoint,
+        &Relays::Disabled,
+        &host.host_ticket,
         &host.room_code(),
         &host.token,
         "Guest".into(),
@@ -124,32 +132,32 @@ async fn host_only_blocks_guest_controls_and_close_releases_port() {
         })
         .await
         .is_err());
-    guest.close().await;
     host.close().await;
-    tokio::net::TcpListener::bind(addr).await.unwrap();
+    wait_until(|| !guest.is_connected()).await;
+    guest.close().await;
 }
 
 #[tokio::test]
-async fn closing_host_also_closes_sockets_that_have_not_joined() {
+async fn closing_host_also_closes_connections_that_have_not_joined() {
     use futures_util::StreamExt;
     let player = Arc::new(HeadlessPlayer::new());
     player.open_file("movie.mkv").unwrap();
     let host = LocalSession::host(
         player,
-        "127.0.0.1:0".parse().unwrap(),
+        &Relays::Disabled,
         "Host".into(),
         PermissionMode::FreeControl,
     )
     .await
     .unwrap();
-    let (mut socket, _) = tokio_tungstenite::connect_async(&host.endpoint)
+    let mut link = RoomLink::connect(&host.host_ticket, &Relays::Disabled, Duration::from_secs(5))
         .await
         .unwrap();
     host.close().await;
-    let closed = tokio::time::timeout(Duration::from_secs(2), socket.next()).await;
+    let closed = tokio::time::timeout(Duration::from_secs(3), link.inbound.next()).await;
     assert!(
-        closed.is_ok(),
-        "an unjoined upgraded socket must not outlive the room"
+        matches!(closed, Ok(None)),
+        "an unjoined connection must not outlive the room"
     );
 }
 
@@ -157,8 +165,8 @@ async fn closing_host_also_closes_sockets_that_have_not_joined() {
 async fn guest_supplied_max_revision_cannot_disable_host_controls() {
     let a=Arc::new(HeadlessPlayer::new());a.open_file("movie.mkv").unwrap();
     let b=Arc::new(HeadlessPlayer::new());b.open_file("movie.mkv").unwrap();
-    let host=LocalSession::host(a.clone(),"127.0.0.1:0".parse().unwrap(),"Host".into(),PermissionMode::FreeControl).await.unwrap();
-    let guest=LocalSession::join(b,&host.endpoint,&host.room_code(),&host.token,"Guest".into()).await.unwrap();
+    let host=LocalSession::host(a.clone(),&Relays::Disabled,"Host".into(),PermissionMode::FreeControl).await.unwrap();
+    let guest=LocalSession::join(b,&Relays::Disabled,&host.host_ticket,&host.room_code(),&host.token,"Guest".into()).await.unwrap();
     guest.command(ClientMessage::PlaybackSeek{revision:u64::MAX,target_position_ms:12000,client_timestamp_ms:0}).await.unwrap();
     wait_until(||a.get_state().unwrap().position_ms==12000).await;
     assert!(host.snapshot().playback.revision<100);
@@ -166,4 +174,32 @@ async fn guest_supplied_max_revision_cannot_disable_host_controls() {
     drop(host);
     wait_until(||!guest.is_connected()).await;
     guest.close().await;
+}
+
+/// Same path as the app: public n0 relays and address lookup over the internet.
+/// Run manually: `cargo test -p network --test local_sync_test -- --ignored`
+#[tokio::test]
+#[ignore = "needs internet access to the n0 relays"]
+async fn room_syncs_over_the_public_iroh_network() {
+    let a = Arc::new(HeadlessPlayer::new());
+    a.open_file("movie.mkv").unwrap();
+    let b = Arc::new(HeadlessPlayer::new());
+    b.open_file("movie.mkv").unwrap();
+    let host = LocalSession::host(a.clone(), &Relays::Default, "Host".into(), PermissionMode::FreeControl)
+        .await
+        .unwrap();
+    println!("host ticket: {} chars", host.host_ticket.len());
+    let guest = LocalSession::join(b.clone(), &Relays::Default, &host.host_ticket, &host.room_code(), &host.token, "Guest".into())
+        .await
+        .unwrap();
+    host.command(ClientMessage::PlaybackSeek { revision: 0, target_position_ms: 42000, client_timestamp_ms: 0 })
+        .await
+        .unwrap();
+    wait_until(|| b.get_state().unwrap().position_ms == 42000).await;
+    guest.command(ClientMessage::PlaybackPause { revision: 0, position_ms: 30000, client_timestamp_ms: 0 })
+        .await
+        .unwrap();
+    wait_until(|| a.get_state().unwrap().position_ms == 30000).await;
+    host.close().await;
+    wait_until(|| !guest.is_connected()).await;
 }

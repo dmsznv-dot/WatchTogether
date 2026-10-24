@@ -383,6 +383,7 @@ export class MockIpcBackend {
           room_id: roomId,
           room_code: code,
           room_token: token,
+          host_addr: `mock-iroh-${code}`,
         };
         return response as unknown as T;
       }
