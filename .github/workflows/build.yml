@@ -13,12 +13,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The id stays 'macos-latest' (job and artifact names are used by release.yml),
+          # but the runner is pinned: Homebrew bottles target the runner's macOS, and the
+          # bundled libmpv must run on the app's minimumSystemVersion (15.0).
           - platform: 'macos-latest'
+            runner: 'macos-15'
             args: '--bundles app --no-sign'
           - platform: 'windows-latest'
             args: '--bundles msi,nsis --config src-tauri/tauri.windows.conf.json'
 
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner || matrix.platform }}
 
     steps:
       - name: Checkout repository
@@ -95,6 +99,10 @@ jobs:
           python3 scripts/bundle_mpv_macos.py "target/release/bundle/macos/Watch Together.app"
           mkdir -p target/release/bundle/dmg
           hdiutil create -volname "Watch Together" -srcfolder "target/release/bundle/macos/Watch Together.app" -ov -format UDZO "target/release/bundle/dmg/Watch_Together_macOS.dmg"
+
+      - name: Verify packaged DMG launches without Homebrew
+        if: matrix.platform == 'macos-latest'
+        run: ./scripts/smoke_macos_dmg.sh "target/release/bundle/dmg/Watch_Together_macOS.dmg" --hide-homebrew
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

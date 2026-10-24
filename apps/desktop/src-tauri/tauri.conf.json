@@ -51,7 +51,7 @@
     ],
     "macOS": {
       "entitlements": "Entitlements.plist",
-      "minimumSystemVersion": "11.0",
+      "minimumSystemVersion": "15.0",
       "frameworks": []
     },
     "category": "Video",
