@@ -57,7 +57,7 @@ xattr -dr com.apple.quarantine "/Applications/Watch Together.app"
 субтитров. Это видно только вам и на синхронизацию не влияет.
 
 Комната существует, пока она открыта у ведущего. Если связь пропадает, воспроизведение
-у гостя ставится на паузу. Подробнее — в [инструкции](docs/SELF_HOSTED_SYNC.md).
+у гостя ставится на паузу. Подробнее — в [инструкции](SELF_HOSTED_SYNC.md).
 
 ## Горячие клавиши
 
@@ -75,7 +75,7 @@ xattr -dr com.apple.quarantine "/Applications/Watch Together.app"
 
 ## Если не подключается
 
-Утилита [`wt-nettest`](tools/nettest/README.md) проверяет связь между двумя
+Утилита [`wt-nettest`](../tools/nettest/README.md) проверяет связь между двумя
 компьютерами без приложения и сохраняет лог. Скачать:
 [macOS](https://github.com/dmsznv-dot/WatchTogether/releases/download/nettest/wt-nettest-macos.zip) ·
 [Windows](https://github.com/dmsznv-dot/WatchTogether/releases/download/nettest/wt-nettest-windows.exe).
@@ -128,10 +128,10 @@ cargo test --workspace          # Rust
 cd apps/desktop && npm test     # интерфейс
 ```
 
-Подпись сборок для Apple и Windows и ключ обновлений — в [docs/SIGNING.md](docs/SIGNING.md).
+Подпись сборок для Apple и Windows и ключ обновлений — в [docs/SIGNING.md](SIGNING.md).
 
 Тесты с настоящим libmpv и сетью помечены `#[ignore]` и запускаются с `--ignored`
-(см. [build.yml](.github/workflows/build.yml)). Сборки для обеих систем и релизы
+(см. [build.yml](../.github/workflows/build.yml)). Сборки для обеих систем и релизы
 собирает GitHub Actions при каждом пуше в `main`.
 
 ## Структура
